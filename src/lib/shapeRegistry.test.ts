@@ -14,8 +14,8 @@ describe('shape registry', () => {
 
     expect(new Set(registeredKinds).size).toBe(registeredKinds.length);
     expect(new Set(registeredKinds)).toEqual(new Set(SHAPE_KINDS));
-    expect(VISIBLE_SHAPES).toHaveLength(115);
-    expect(VISIBLE_SHAPES.filter((definition) => definition.category === 'scientific')).toHaveLength(18);
+    expect(VISIBLE_SHAPES).toHaveLength(135);
+    expect(VISIBLE_SHAPES.filter((definition) => definition.category === 'scientific')).toHaveLength(38);
     expect(new Set(VISIBLE_SHAPES.map((definition) => definition.category))).toEqual(
       new Set(Object.keys(SHAPE_CATEGORY_LABELS)),
     );

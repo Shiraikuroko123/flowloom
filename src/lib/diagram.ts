@@ -23,7 +23,12 @@ export function estimateSvgTextWidth(text: string, fontSize: number): number {
     if (/\p{Mark}/u.test(character)) continue;
     if (/\s/u.test(character)) units += 0.33;
     else if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Extended_Pictographic}]/u.test(character)) units += 1;
-    else units += 0.58;
+    else if (/[ilIjtfr1'`.,:;!|]/u.test(character)) units += 0.3;
+    else if (/[MW@%&QO]/u.test(character)) units += 0.82;
+    else if (/[A-Z]/u.test(character)) units += 0.64;
+    else if (/[0-9]/u.test(character)) units += 0.56;
+    else if (/[a-z]/u.test(character)) units += 0.52;
+    else units += 0.62;
   }
   return Math.max(fontSize * 0.5, units * fontSize);
 }
@@ -211,14 +216,16 @@ export function normalizeEdges(edges: FlowEdge[], nodeIds: Set<string>): FlowEdg
       const width = edge.data?.width ?? 1.75;
       const arrowStart = edge.data?.arrowStart ?? 'none';
       const arrowEnd = edge.data?.arrowEnd ?? 'closed';
+      const scientificSemantic = edge.data?.scientificSemantic;
       return {
         ...edge,
         id: String(edge.id || createId('edge')),
         source: String(edge.source),
         target: String(edge.target),
-        type: reactFlowEdgeType(routing),
+        type: scientificSemantic ? 'scientific' : reactFlowEdgeType(routing),
         label: edge.data?.label ?? (typeof edge.label === 'string' ? edge.label : undefined),
         data: {
+          ...edge.data,
           label: edge.data?.label ?? (typeof edge.label === 'string' ? edge.label : undefined),
           color,
           width,
@@ -226,6 +233,7 @@ export function normalizeEdges(edges: FlowEdge[], nodeIds: Set<string>): FlowEdg
           routing,
           arrowStart,
           arrowEnd,
+          scientificSemantic,
         },
         markerStart: createEdgeMarker(arrowStart, color),
         markerEnd: createEdgeMarker(arrowEnd, color),

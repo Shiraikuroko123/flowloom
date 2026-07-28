@@ -11,9 +11,9 @@ import { createFlowEdge, createFlowNode } from './diagram';
 import { VISIBLE_SHAPES } from './shapeRegistry';
 
 describe('diagram file adapters', () => {
-  it('registers 115 unique, user-visible standard and scientific shapes', () => {
-    expect(VISIBLE_SHAPES).toHaveLength(115);
-    expect(new Set(VISIBLE_SHAPES.map((definition) => definition.kind))).toHaveLength(115);
+  it('registers 135 unique, user-visible standard and scientific shapes', () => {
+    expect(VISIBLE_SHAPES).toHaveLength(135);
+    expect(new Set(VISIBLE_SHAPES.map((definition) => definition.kind))).toHaveLength(135);
   });
 
   it('imports Mermaid nodes, decisions, labels, and edges', async () => {
@@ -100,6 +100,23 @@ describe('diagram file adapters', () => {
     expect(result.title).toBe('测试流程');
     expect(result.nodes.map((node) => node.data.label)).toEqual(['开始', '处理']);
     expect(result.edges[0].source).toBe('first');
+  });
+
+  it('round-trips editable scientific visual variants through native JSON', async () => {
+    const model = createFlowNode('scientific-transformer', { x: 24, y: 32 }, 'Latent World Model', { id: 'world-model' });
+    model.data = {
+      ...model.data,
+      description: 'p(zₜ₊₁ | zₜ, aₜ)',
+      scientificVariant: 'world-model',
+    };
+    const serialized = serializeDocument('World model', [model], []);
+    const result = await importDiagramFile(new File([serialized], 'world-model.flow.json', { type: 'application/json' }));
+
+    expect(result.nodes[0].data).toMatchObject({
+      kind: 'scientific-transformer',
+      scientificVariant: 'world-model',
+      description: 'p(zₜ₊₁ | zₜ, aₜ)',
+    });
   });
 
   it('imports Excalidraw bound shapes and arrows', async () => {

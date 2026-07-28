@@ -3,8 +3,105 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { FlowEdge, FlowNode, ScientificFigureSpec } from '../types';
 import { ShapeVisual } from '../components/ShapeVisual';
 import { estimateSvgTextWidth } from './diagram';
-import { getShapeDefinition } from './shapeRegistry';
-import { mmToPx } from './scientific';
+import { mmToPx, PUBLICATION_TYPOGRAPHY } from './scientific';
+import { routeScientificEdge, scientificConnectionPoint } from './scientificRouting';
+import {
+  isScientificShapeKind,
+  layoutScientificNodeContent,
+  layoutSchematicNodeContent,
+  scientificNodeTextPaddingX,
+} from './scientificNodeLayout';
+
+const PUBLICATION_PDF_FONT_FAMILY = 'Flowloom Publication Sans';
+const PUBLICATION_PDF_FONTS = [
+  { fileName: 'NotoSansSC-Regular.ttf', weight: 400 },
+  { fileName: 'NotoSansSC-Bold.ttf', weight: 700 },
+] as const;
+const PUBLICATION_RASTER_FONTS = [
+  { fileName: 'NotoSansSC-Evidence-Regular.ttf', weight: 400 },
+  { fileName: 'NotoSansSC-Evidence-Bold.ttf', weight: 700 },
+] as const;
+
+const PDF_SUBSCRIPT_GLYPHS: Record<string, string> = {
+  '₀': '0',
+  '₁': '1',
+  '₂': '2',
+  '₃': '3',
+  '₄': '4',
+  '₅': '5',
+  '₆': '6',
+  '₇': '7',
+  '₈': '8',
+  '₉': '9',
+  '₊': '+',
+  '₋': '-',
+  '₌': '=',
+  '₍': '(',
+  '₎': ')',
+  'ₐ': 'a',
+  'ₑ': 'e',
+  'ₕ': 'h',
+  'ᵢ': 'i',
+  'ⱼ': 'j',
+  'ₖ': 'k',
+  'ₗ': 'l',
+  'ₘ': 'm',
+  'ₙ': 'n',
+  'ₒ': 'o',
+  'ₚ': 'p',
+  'ᵣ': 'r',
+  'ₛ': 's',
+  'ₜ': 't',
+  'ᵤ': 'u',
+  'ᵥ': 'v',
+  'ₓ': 'x',
+};
+
+const PDF_SUPERSCRIPT_GLYPHS: Record<string, string> = {
+  '⁰': '0',
+  '¹': '1',
+  '²': '2',
+  '³': '3',
+  '⁴': '4',
+  '⁵': '5',
+  '⁶': '6',
+  '⁷': '7',
+  '⁸': '8',
+  '⁹': '9',
+  '⁺': '+',
+  '⁻': '-',
+  '⁼': '=',
+  '⁽': '(',
+  '⁾': ')',
+  'ᵃ': 'a',
+  'ᵇ': 'b',
+  'ᶜ': 'c',
+  'ᵈ': 'd',
+  'ᵉ': 'e',
+  'ᶠ': 'f',
+  'ᵍ': 'g',
+  'ʰ': 'h',
+  'ⁱ': 'i',
+  'ʲ': 'j',
+  'ᵏ': 'k',
+  'ˡ': 'l',
+  'ᵐ': 'm',
+  'ⁿ': 'n',
+  'ᵒ': 'o',
+  'ᵖ': 'p',
+  'ʳ': 'r',
+  'ˢ': 's',
+  'ᵗ': 't',
+  'ᵘ': 'u',
+  'ᵛ': 'v',
+  'ʷ': 'w',
+  'ˣ': 'x',
+  'ʸ': 'y',
+  'ᶻ': 'z',
+};
+
+let publicationFontData: Promise<Map<string, string>> | undefined;
+let publicationRasterFontData: Promise<Map<string, string>> | undefined;
 
 interface NodeBox {
   x: number;
@@ -116,48 +213,191 @@ function serializeAttributes(attributes: Record<string, string | number>): strin
     .join(' ');
 }
 
-function wrapText(value: string, maxWidth: number, fontSize: number): string[] {
-  const explicit = value.split(/\r?\n/);
-  const lines: string[] = [];
-  for (const paragraph of explicit) {
-    if (estimateSvgTextWidth(paragraph, fontSize) <= maxWidth) {
-      lines.push(paragraph);
-      continue;
-    }
-    let line = '';
-    for (const character of Array.from(paragraph)) {
-      if (line && estimateSvgTextWidth(line + character, fontSize) > maxWidth) {
-        lines.push(line);
-        line = character.trimStart();
-      } else {
-        line += character;
-      }
-    }
-    if (line) lines.push(line);
+function fontDataUrl(fileName: string): string {
+  return new URL(`fonts/${fileName}`, document.baseURI).href;
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error('Publication font could not be read.'));
+    reader.onload = () => {
+      const result = String(reader.result ?? '');
+      const separator = result.indexOf(',');
+      if (separator < 0) reject(new Error('Publication font data is invalid.'));
+      else resolve(result.slice(separator + 1));
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function loadPublicationFontData(): Promise<Map<string, string>> {
+  if (!publicationFontData) {
+    publicationFontData = Promise.all(PUBLICATION_PDF_FONTS.map(async ({ fileName }) => {
+      const response = await fetch(fontDataUrl(fileName));
+      if (!response.ok) throw new Error(`Publication font failed to load (${response.status}).`);
+      return [fileName, await blobToBase64(await response.blob())] as const;
+    })).then((entries) => new Map(entries));
   }
-  return lines.length ? lines : [''];
+  return publicationFontData;
+}
+
+async function loadPublicationRasterFontData(): Promise<Map<string, string>> {
+  if (!publicationRasterFontData) {
+    publicationRasterFontData = Promise.all(PUBLICATION_RASTER_FONTS.map(async ({ fileName }) => {
+      const response = await fetch(fontDataUrl(fileName));
+      if (!response.ok) throw new Error(`Publication raster font failed to load (${response.status}).`);
+      return [fileName, await blobToBase64(await response.blob())] as const;
+    })).then((entries) => new Map(entries));
+  }
+  return publicationRasterFontData;
+}
+
+export interface PublicationPdfFontTarget {
+  addFileToVFS(fileName: string, data: string): unknown;
+  addFont(
+    postScriptName: string,
+    id: string,
+    fontStyle: string,
+    fontWeight?: string | number,
+    encoding?: 'Identity-H',
+  ): unknown;
+}
+
+export async function registerPublicationPdfFonts(pdf: PublicationPdfFontTarget): Promise<void> {
+  const fonts = await loadPublicationFontData();
+  for (const { fileName, weight } of PUBLICATION_PDF_FONTS) {
+    const data = fonts.get(fileName);
+    if (!data) throw new Error(`Publication font is missing: ${fileName}`);
+    pdf.addFileToVFS(fileName, data);
+    pdf.addFont(fileName, PUBLICATION_PDF_FONT_FAMILY, 'normal', weight, 'Identity-H');
+  }
+}
+
+function numericAttribute(element: Element, name: string): number | undefined {
+  const value = Number.parseFloat(element.getAttribute(name) ?? '');
+  return Number.isFinite(value) ? value : undefined;
+}
+
+type PdfScriptKind = 'normal' | 'subscript' | 'superscript';
+
+interface PdfTextRun {
+  kind: PdfScriptKind;
+  value: string;
+}
+
+function pdfTextRuns(value: string): PdfTextRun[] {
+  const runs: PdfTextRun[] = [];
+  for (const character of Array.from(value)) {
+    const subscript = PDF_SUBSCRIPT_GLYPHS[character];
+    const superscript = PDF_SUPERSCRIPT_GLYPHS[character];
+    const kind: PdfScriptKind = subscript !== undefined
+      ? 'subscript'
+      : superscript !== undefined
+        ? 'superscript'
+        : 'normal';
+    const mapped = subscript ?? superscript ?? character;
+    const current = runs.at(-1);
+    if (current?.kind === kind) current.value += mapped;
+    else runs.push({ kind, value: mapped });
+  }
+  return runs;
+}
+
+function replaceUnicodeScriptsForPdf(element: SVGTextElement): void {
+  const textNodes: Text[] = [];
+  const collectTextNodes = (parent: Node) => {
+    parent.childNodes.forEach((child) => {
+      if (child.nodeType === 3) textNodes.push(child as Text);
+      else collectTextNodes(child);
+    });
+  };
+  collectTextNodes(element);
+
+  const fontSize = numericAttribute(element, 'font-size') ?? PUBLICATION_TYPOGRAPHY.moduleLabel;
+  const scriptFontSize = fontSize * 0.72;
+  const baselineOffset = fontSize * 0.22;
+  for (const textNode of textNodes) {
+    const runs = pdfTextRuns(textNode.data);
+    if (runs.every((run) => run.kind === 'normal')) continue;
+    const fragment = textNode.ownerDocument.createDocumentFragment();
+    let baseline = 0;
+    for (const run of runs) {
+      const targetBaseline = run.kind === 'subscript'
+        ? baselineOffset
+        : run.kind === 'superscript'
+          ? -baselineOffset
+          : 0;
+      const span = textNode.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+      span.textContent = run.value;
+      if (run.kind !== 'normal') {
+        span.setAttribute('data-flowloom-script', run.kind);
+        span.setAttribute('font-size', String(scriptFontSize));
+      }
+      if (targetBaseline !== baseline) span.setAttribute('dy', String(targetBaseline - baseline));
+      fragment.appendChild(span);
+      baseline = targetBaseline;
+    }
+    textNode.parentNode?.replaceChild(fragment, textNode);
+  }
+}
+
+export function preparePublicationSvgForPdf(
+  svg: SVGSVGElement,
+  _figure: ScientificFigureSpec,
+): void {
+  svg.querySelectorAll<SVGElement>('[vector-effect="non-scaling-stroke"]').forEach((element) => {
+    element.removeAttribute('vector-effect');
+  });
+  svg.querySelectorAll<SVGTextElement>('text').forEach((element) => {
+    const weight = numericAttribute(element, 'font-weight') ?? 400;
+    element.setAttribute('font-family', PUBLICATION_PDF_FONT_FAMILY);
+    element.setAttribute('font-weight', weight >= 600 ? '700' : '400');
+    replaceUnicodeScriptsForPdf(element);
+  });
+}
+
+export async function preparePublicationSvgForRaster(
+  svg: SVGSVGElement,
+  figure: ScientificFigureSpec,
+): Promise<void> {
+  preparePublicationSvgForPdf(svg, figure);
+  const fontData = await loadPublicationRasterFontData();
+  const rules = PUBLICATION_RASTER_FONTS.map(({ fileName, weight }) => {
+    const data = fontData.get(fileName);
+    if (!data) throw new Error(`Publication raster font is missing: ${fileName}`);
+    return `@font-face{font-family:'${PUBLICATION_PDF_FONT_FAMILY}';src:url(data:font/ttf;base64,${data}) format('truetype');font-style:normal;font-weight:${weight};}`;
+  }).join('');
+  const style = svg.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'style');
+  style.setAttribute('data-flowloom-publication-fonts', 'true');
+  style.textContent = rules;
+  svg.insertBefore(style, svg.firstChild);
 }
 
 function serializeNodeText(node: FlowNode, box: NodeBox): string {
   if (!node.data.label.trim() || node.data.kind === 'vector' || node.data.kind === 'image' || node.data.textColor === 'transparent') return '';
-  const definition = getShapeDefinition(node.data.kind);
   const fontSize = node.data.fontSize;
-  const lines = wrapText(node.data.label, Math.max(1, box.width - 20), fontSize);
-  const lineHeight = fontSize * 1.2;
-  const textAnchor = node.data.textAlign === 'left' ? 'start' : node.data.textAlign === 'right' ? 'end' : 'middle';
-  const x = node.data.textAlign === 'left' ? box.x + 10 : node.data.textAlign === 'right' ? box.x + box.width - 10 : box.x + box.width / 2;
-  const placement = definition.textPlacement;
-  const totalHeight = Math.max(1, lines.length) * lineHeight;
-  const startY = placement === 'header' || placement === 'lane' || node.data.verticalAlign === 'top'
-    ? box.y + fontSize + 8
-    : placement === 'footer' || node.data.verticalAlign === 'bottom'
-      ? box.y + box.height - totalHeight + fontSize - 8
-      : box.y + (box.height - totalHeight) / 2 + fontSize;
+  const textLayout = layoutSchematicNodeContent(node.data, box.width, box.height);
+  const lines = textLayout.labelLines;
+  const lineHeight = textLayout.labelLineHeight;
+  const isSchematicFrame = node.data.schematicRole === 'frame' || node.data.schematicRole === 'phase';
+  const textAnchor = isSchematicFrame || node.data.textAlign === 'left' ? 'start' : node.data.textAlign === 'right' ? 'end' : 'middle';
+  const horizontalPadding = scientificNodeTextPaddingX(node.data);
+  const x = isSchematicFrame || node.data.textAlign === 'left'
+    ? box.x + horizontalPadding
+    : node.data.textAlign === 'right'
+      ? box.x + box.width - horizontalPadding
+      : box.x + box.width / 2;
+  const startY = box.y + textLayout.labelStartY;
   const tspans = lines.map((line, index) => `<tspan x="${x}" y="${startY + index * lineHeight}">${escapeXml(line)}</tspan>`).join('');
   const label = `<text fill="${escapeXml(portableColor(node.data.textColor))}" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="${fontSize}" font-weight="${node.data.fontWeight}" text-anchor="${textAnchor}">${tspans}</text>`;
   if (!node.data.description?.trim()) return label;
-  const descriptionY = Math.min(box.y + box.height - 5, startY + lines.length * lineHeight + fontSize * 0.7);
-  return `${label}<text x="${x}" y="${descriptionY}" fill="${escapeXml(portableColor(node.data.textColor))}" fill-opacity="0.72" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="${Math.max(7, fontSize * 0.78)}" text-anchor="${textAnchor}">${escapeXml(node.data.description)}</text>`;
+  const descriptionFontSize = textLayout.descriptionFontSize;
+  const descriptionLines = textLayout.descriptionLines;
+  const descriptionLineHeight = textLayout.descriptionLineHeight;
+  const descriptionY = box.y + textLayout.descriptionStartY;
+  const descriptionTspans = descriptionLines.map((line, index) => `<tspan x="${x}" y="${descriptionY + index * descriptionLineHeight}">${escapeXml(line)}</tspan>`).join('');
+  return `${label}<text fill="${escapeXml(portableColor(node.data.textColor))}" fill-opacity="0.82" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="${descriptionFontSize}" text-anchor="${textAnchor}">${descriptionTspans}</text>`;
 }
 
 function serializeVectorNode(node: FlowNode, box: NodeBox): string {
@@ -187,6 +427,9 @@ function serializeShapeNode(node: FlowNode, box: NodeBox): string {
   const fill = portableColor(node.data.fill);
   const stroke = portableColor(node.data.stroke);
   const visibleGeometry = !['none', 'transparent'].includes(fill) || !['none', 'transparent'].includes(stroke);
+  const scientificLayout = isScientificShapeKind(node.data.kind)
+    ? layoutScientificNodeContent(node.data, box.width, box.height)
+    : undefined;
   let shape = '';
   if (visibleGeometry) {
     const markup = renderToStaticMarkup(createElement(ShapeVisual, {
@@ -195,6 +438,7 @@ function serializeShapeNode(node: FlowNode, box: NodeBox): string {
       stroke,
       strokeWidth: node.data.borderWidth,
       radius: node.data.radius,
+      variant: node.data.scientificVariant,
     }));
     const parsed = new DOMParser().parseFromString(markup, 'image/svg+xml');
     const root = parsed.documentElement;
@@ -202,7 +446,7 @@ function serializeShapeNode(node: FlowNode, box: NodeBox): string {
       root.setAttribute('x', String(box.x));
       root.setAttribute('y', String(box.y));
       root.setAttribute('width', String(box.width));
-      root.setAttribute('height', String(box.height));
+      root.setAttribute('height', String(scientificLayout?.visualHeight ?? box.height));
       root.removeAttribute('class');
       root.removeAttribute('aria-hidden');
       root.removeAttribute('focusable');
@@ -214,35 +458,6 @@ function serializeShapeNode(node: FlowNode, box: NodeBox): string {
   return `<g opacity="${node.data.opacity}"${transformForBox(box, node.data.rotation ?? 0)}>${shape}${text}</g>`;
 }
 
-function connectionPoint(box: NodeBox, handle: string | null | undefined, other: NodeBox): { x: number; y: number } {
-  const normalized = handle?.toLowerCase();
-  if (normalized === 'top') return { x: box.x + box.width / 2, y: box.y };
-  if (normalized === 'right') return { x: box.x + box.width, y: box.y + box.height / 2 };
-  if (normalized === 'bottom') return { x: box.x + box.width / 2, y: box.y + box.height };
-  if (normalized === 'left') return { x: box.x, y: box.y + box.height / 2 };
-  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  const otherCenter = { x: other.x + other.width / 2, y: other.y + other.height / 2 };
-  const dx = otherCenter.x - center.x;
-  const dy = otherCenter.y - center.y;
-  if (Math.abs(dx) > Math.abs(dy)) return { x: dx >= 0 ? box.x + box.width : box.x, y: center.y };
-  return { x: center.x, y: dy >= 0 ? box.y + box.height : box.y };
-}
-
-function edgePath(edge: FlowEdge, source: { x: number; y: number }, target: { x: number; y: number }): string {
-  if (edge.data?.routing === 'straight') return `M ${source.x} ${source.y} L ${target.x} ${target.y}`;
-  if (edge.data?.routing === 'bezier') {
-    const offset = Math.max(40, Math.abs(target.x - source.x) * 0.45);
-    return `M ${source.x} ${source.y} C ${source.x + offset} ${source.y}, ${target.x - offset} ${target.y}, ${target.x} ${target.y}`;
-  }
-  const vertical = Math.abs(target.y - source.y) >= Math.abs(target.x - source.x);
-  if (vertical) {
-    const middleY = (source.y + target.y) / 2;
-    return `M ${source.x} ${source.y} L ${source.x} ${middleY} L ${target.x} ${middleY} L ${target.x} ${target.y}`;
-  }
-  const middleX = (source.x + target.x) / 2;
-  return `M ${source.x} ${source.y} L ${middleX} ${source.y} L ${middleX} ${target.y} L ${target.x} ${target.y}`;
-}
-
 function serializeEdges(edges: FlowEdge[], boxes: Map<string, NodeBox>): string {
   const values: string[] = [];
   for (const edge of edges) {
@@ -250,8 +465,8 @@ function serializeEdges(edges: FlowEdge[], boxes: Map<string, NodeBox>): string 
     const sourceBox = boxes.get(edge.source);
     const targetBox = boxes.get(edge.target);
     if (!sourceBox || !targetBox) continue;
-    const source = connectionPoint(sourceBox, edge.sourceHandle, targetBox);
-    const target = connectionPoint(targetBox, edge.targetHandle, sourceBox);
+    const source = scientificConnectionPoint(sourceBox, edge.sourceHandle, targetBox);
+    const target = scientificConnectionPoint(targetBox, edge.targetHandle, sourceBox);
     const color = portableColor(edge.data?.color ?? '#555555');
     const width = edge.data?.width ?? 1.75;
     const dash = edge.data?.lineStyle === 'dashed' ? ' stroke-dasharray="8 6"' : edge.data?.lineStyle === 'dotted' ? ' stroke-dasharray="2 5"' : '';
@@ -262,12 +477,19 @@ function serializeEdges(edges: FlowEdge[], boxes: Map<string, NodeBox>): string 
       edge.data?.arrowStart && edge.data.arrowStart !== 'none' ? `<marker id="marker-start-${id}" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 10 1 L 1 5 L 10 9${edge.data.arrowStart === 'closed' ? ' Z' : ''}" fill="${edge.data.arrowStart === 'closed' ? color : 'none'}" stroke="${color}" stroke-width="1.2"/></marker>` : '',
       edge.data?.arrowEnd && edge.data.arrowEnd !== 'none' ? `<marker id="marker-end-${id}" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9${edge.data.arrowEnd === 'closed' ? ' Z' : ''}" fill="${edge.data.arrowEnd === 'closed' ? color : 'none'}" stroke="${color}" stroke-width="1.2"/></marker>` : '',
     ].join('');
-    const path = edgePath(edge, source, target);
+    const route = routeScientificEdge(edge, source, target);
     const label = String(edge.data?.label ?? edge.label ?? '').trim();
+    const labelFontSize = numeric(edge.data?.labelFontSize, PUBLICATION_TYPOGRAPHY.edgeLabel);
+    const labelBaseline = route.label.y - labelFontSize * 0.35;
+    const labelPaddingX = Math.max(5, labelFontSize * 0.28);
+    const labelPaddingY = Math.max(2, labelFontSize * 0.14);
+    const labelWidth = estimateSvgTextWidth(label, labelFontSize) + labelPaddingX * 2;
+    const labelHeight = labelFontSize * 1.08 + labelPaddingY * 2;
     const labelMarkup = label
-      ? `<text x="${(source.x + target.x) / 2}" y="${(source.y + target.y) / 2 - 5}" text-anchor="middle" fill="${color}" stroke="#ffffff" stroke-width="4" paint-order="stroke" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="11" font-weight="600">${escapeXml(label)}</text>`
+      ? `<g data-flowloom-edge-label="true"><rect data-flowloom-edge-label-bg="true" x="${route.label.x - labelWidth / 2}" y="${labelBaseline - labelFontSize * 0.88 - labelPaddingY}" width="${labelWidth}" height="${labelHeight}" rx="3" fill="#ffffff" fill-opacity="0.96"/><text x="${route.label.x}" y="${labelBaseline}" text-anchor="middle" fill="${color}" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="${labelFontSize}" font-weight="650">${escapeXml(label)}</text></g>`
       : '';
-    values.push(`<defs>${markers}</defs><path d="${path}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"${dash}${markerStart}${markerEnd}/>${labelMarkup}`);
+    const semantic = edge.data?.scientificSemantic ? ` data-connector-semantic="${escapeXml(edge.data.scientificSemantic)}"` : '';
+    values.push(`<g data-flowloom-edge-id="${escapeXml(edge.id)}"${semantic}><defs>${markers}</defs><path d="${route.path}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"${dash}${markerStart}${markerEnd}/>${labelMarkup}</g>`);
   }
   return values.join('');
 }
@@ -292,7 +514,12 @@ export function serializePublicationSvg(
   const background = spec.background === 'transparent' ? '' : `<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>`;
   const serializeNodes = (values: FlowNode[]) => values.map((node) => {
     const box = boxes.get(node.id)!;
-    return node.data.kind === 'vector' ? serializeVectorNode(node, box) : serializeShapeNode(node, box);
+    const markup = node.data.kind === 'vector' ? serializeVectorNode(node, box) : serializeShapeNode(node, box);
+    if (!markup) return '';
+    const role = node.data.schematicRole ? ` data-schematic-role="${escapeXml(node.data.schematicRole)}"` : '';
+    const variant = node.data.scientificVariant ? ` data-scientific-variant="${escapeXml(node.data.scientificVariant)}"` : '';
+    const evidence = node.data.scientificEvidence ? ` data-scientific-evidence="${escapeXml(node.data.scientificEvidence)}"` : '';
+    return `<g data-flowloom-node-id="${escapeXml(node.id)}" data-flowloom-kind="${escapeXml(node.data.kind)}"${role}${variant}${evidence}>${markup}</g>`;
   }).join('');
   const backgroundNodes = sortedNodes.filter((node) => node.data.schematicRole === 'frame' || node.data.schematicRole === 'phase');
   const foregroundNodes = sortedNodes.filter((node) => node.data.schematicRole !== 'frame' && node.data.schematicRole !== 'phase');
@@ -308,6 +535,40 @@ export function serializePublicationSvg(
       schematic: node.data.provenance!.schematic,
       generatedAt: node.data.provenance!.generatedAt,
     }));
-  const metadata = escapeXml(JSON.stringify({ title, figure: spec, provenance }));
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${spec.widthMm}mm" height="${spec.heightMm}mm" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(title)}"><title>${escapeXml(title)}</title><metadata>${metadata}</metadata>${background}${serializeNodes(backgroundNodes)}${serializeEdges(edges, boxes)}${serializeNodes(foregroundNodes)}</svg>\n`;
+  const editableNodes = sortedNodes.map((node) => {
+    const box = boxes.get(node.id)!;
+    return {
+      id: node.id,
+      type: 'flowNode',
+      position: { x: box.x, y: box.y },
+      style: { ...node.style, width: box.width, height: box.height },
+      zIndex: node.zIndex,
+      hidden: node.hidden,
+      selected: false,
+      data: node.data,
+    };
+  });
+  const editableIds = new Set(editableNodes.map((node) => node.id));
+  const editableEdges = edges
+    .filter((edge) => !edge.hidden && editableIds.has(edge.source) && editableIds.has(edge.target))
+    .map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: edge.sourceHandle,
+      targetHandle: edge.targetHandle,
+      type: edge.type,
+      label: typeof edge.label === 'string' ? edge.label : edge.data?.label,
+      data: edge.data,
+      style: edge.style,
+      hidden: edge.hidden,
+      selected: false,
+    }));
+  const metadata = escapeXml(JSON.stringify({
+    title,
+    figure: spec,
+    provenance,
+    flowloom: { version: 2, nodes: editableNodes, edges: editableEdges },
+  }));
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${spec.widthMm}mm" height="${spec.heightMm}mm" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(title)}" data-flowloom-editable="true"><title>${escapeXml(title)}</title><metadata>${metadata}</metadata>${background}${serializeNodes(backgroundNodes)}${serializeEdges(edges, boxes)}${serializeNodes(foregroundNodes)}</svg>\n`;
 }

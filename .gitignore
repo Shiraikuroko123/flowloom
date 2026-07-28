@@ -6,6 +6,9 @@ dist
 .DS_Store
 Thumbs.db
 output
+tmp/
+__pycache__/
+*.pyc
 .playwright-cli
 .vite-stdout.log
 .vite-stderr.log

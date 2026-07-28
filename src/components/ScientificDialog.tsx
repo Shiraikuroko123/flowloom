@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import type {
+  FlowEdge,
   FlowNode,
   ScientificChartType,
   ScientificFieldMap,
@@ -40,6 +41,7 @@ import {
   DEFAULT_SCIENTIFIC_SCHEMATIC_OPTIONS,
   SCIENTIFIC_SCHEMATIC_TEMPLATES,
   createScientificSchematic,
+  defaultScientificSchematicBackbone,
   defaultScientificSchematicTitle,
   type EditableScientificSchematic,
 } from '../lib/scientificSchematics';
@@ -49,6 +51,12 @@ import {
 } from '../lib/scientificFigureRecipes';
 import { IconButton } from './IconButton';
 import { ShapeVisual } from './ShapeVisual';
+import { routeScientificEdge, scientificConnectionPoint } from '../lib/scientificRouting';
+import {
+  layoutSchematicNodeContent,
+  scientificNodeTextPaddingX,
+} from '../lib/scientificNodeLayout';
+import { estimateSvgTextWidth } from '../lib/diagram';
 
 type ScientificTab = 'figure' | 'chart' | 'schematic' | 'quality';
 
@@ -57,6 +65,7 @@ const SCIENTIFIC_TAB_ORDER: ScientificTab[] = ['figure', 'chart', 'schematic', '
 interface ScientificDialogProps {
   open: boolean;
   nodes: FlowNode[];
+  edges: FlowEdge[];
   figure?: ScientificFigureSpec;
   onClose: () => void;
   onConfigureFigure: (spec: ScientificFigureSpec, layoutNodes: FlowNode[]) => void;
@@ -68,11 +77,11 @@ const DEFAULT_FIGURE: ScientificFigureSpec = {
   widthMm: 180,
   heightMm: 120,
   dpi: 300,
-  rows: 2,
-  columns: 2,
+  rows: 1,
+  columns: 1,
   marginMm: 6,
   gapMm: 5,
-  panelLabels: true,
+  panelLabels: false,
   labelStyle: 'uppercase',
   background: '#ffffff',
   updatedAt: new Date(0).toISOString(),
@@ -365,43 +374,6 @@ function previewNumber(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function previewLabelLines(value: string, width: number): string[] {
-  const limit = Math.max(8, Math.floor(width / 9));
-  const explicit = value.split(/\r?\n/).map((part) => part.trim()).filter(Boolean);
-  if (explicit.length > 1) return explicit.slice(0, 3);
-  const wrap = (segment: string): string[] => {
-    const trimmed = segment.trim();
-    if (!trimmed) return [];
-    const characters = Array.from(trimmed);
-    if (characters.length <= limit) return [trimmed];
-    const words = trimmed.split(/\s+/).filter(Boolean);
-    if (words.length === 1) {
-      const chunks: string[] = [];
-      for (let index = 0; index < characters.length; index += limit) {
-        chunks.push(characters.slice(index, index + limit).join(''));
-      }
-      return chunks;
-    }
-    const lines: string[] = [];
-    let line = '';
-    for (const word of words) {
-      if (line && Array.from(`${line} ${word}`).length > limit) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = line ? `${line} ${word}` : word;
-      }
-    }
-    if (line) lines.push(line);
-    return lines;
-  };
-  const lines = value.split(/\r?\n/).flatMap(wrap);
-  if (lines.length <= 3) return lines.length ? lines : [''];
-  const visible = lines.slice(0, 3);
-  visible[2] = `${Array.from(visible[2]).slice(0, Math.max(1, limit - 1)).join('')}…`;
-  return visible;
-}
-
 function SchematicPreview({ schematic }: { schematic: EditableScientificSchematic }) {
   const markerPrefix = useId().replaceAll(':', '');
   const boxes = new Map(schematic.nodes.map((node) => [node.id, {
@@ -410,30 +382,13 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
     width: previewNumber(node.style?.width, 160),
     height: previewNumber(node.style?.height, 72),
   }]));
-  const edgePath = (edge: EditableScientificSchematic['edges'][number]) => {
+  const edgeRoute = (edge: EditableScientificSchematic['edges'][number]) => {
     const source = boxes.get(edge.source);
     const target = boxes.get(edge.target);
-    if (!source || !target) return '';
-    const sourceCenter = { x: source.x + source.width / 2, y: source.y + source.height / 2 };
-    const targetCenter = { x: target.x + target.width / 2, y: target.y + target.height / 2 };
-    const horizontal = Math.abs(targetCenter.x - sourceCenter.x) >= Math.abs(targetCenter.y - sourceCenter.y);
-    const from = horizontal
-      ? { x: targetCenter.x >= sourceCenter.x ? source.x + source.width : source.x, y: sourceCenter.y }
-      : { x: sourceCenter.x, y: targetCenter.y >= sourceCenter.y ? source.y + source.height : source.y };
-    const to = horizontal
-      ? { x: targetCenter.x >= sourceCenter.x ? target.x : target.x + target.width, y: targetCenter.y }
-      : { x: targetCenter.x, y: targetCenter.y >= sourceCenter.y ? target.y : target.y + target.height };
-    if (edge.data?.routing === 'bezier') {
-      const bend = Math.max(70, Math.abs(to.x - from.x) * 0.38);
-      return `M ${from.x} ${from.y} C ${from.x + bend} ${from.y}, ${to.x - bend} ${to.y}, ${to.x} ${to.y}`;
-    }
-    if (edge.data?.routing === 'straight') return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
-    if (horizontal) {
-      const middle = (from.x + to.x) / 2;
-      return `M ${from.x} ${from.y} L ${middle} ${from.y} L ${middle} ${to.y} L ${to.x} ${to.y}`;
-    }
-    const middle = (from.y + to.y) / 2;
-    return `M ${from.x} ${from.y} L ${from.x} ${middle} L ${to.x} ${middle} L ${to.x} ${to.y}`;
+    if (!source || !target) return undefined;
+    const from = scientificConnectionPoint(source, edge.sourceHandle, target);
+    const to = scientificConnectionPoint(target, edge.targetHandle, source);
+    return routeScientificEdge(edge, from, to);
   };
   const sortedNodes = [...schematic.nodes].sort((left, right) => (left.zIndex ?? 0) - (right.zIndex ?? 0));
   const backgroundNodes = sortedNodes.filter((node) => node.data.schematicRole === 'frame' || node.data.schematicRole === 'phase');
@@ -441,16 +396,40 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
   const renderNode = (node: FlowNode) => {
     const box = boxes.get(node.id)!;
     const isFrame = node.data.schematicRole === 'frame' || node.data.schematicRole === 'phase';
-    const isScientificShape = node.data.kind.startsWith('scientific-');
-    const lines = previewLabelLines(node.data.label, box.width);
-    const fontSize = isFrame ? Math.min(16, node.data.fontSize) : isScientificShape ? Math.min(11, node.data.fontSize) : Math.min(14, node.data.fontSize);
-    const startY = isFrame
-      ? box.y + 25
-      : isScientificShape
-        ? box.y + box.height - Math.max(5, (lines.length - 1) * fontSize * 1.12 + 5)
-        : box.y + box.height / 2 - (lines.length - 1) * fontSize * 0.56 + fontSize * 0.34;
+    const textLayout = layoutSchematicNodeContent(node.data, box.width, box.height);
+    const lines = textLayout.labelLines;
+    const fontSize = node.data.fontSize;
+    const descriptionLines = textLayout.descriptionLines;
+    const descriptionSize = textLayout.descriptionFontSize;
+    const visualHeight = textLayout.visualHeight;
+    const horizontalPadding = scientificNodeTextPaddingX(node.data);
+    const textAnchor = isFrame || node.data.textAlign === 'left'
+      ? 'start'
+      : node.data.textAlign === 'right'
+        ? 'end'
+        : 'middle';
+    const textX = isFrame || node.data.textAlign === 'left'
+      ? box.x + horizontalPadding
+      : node.data.textAlign === 'right'
+        ? box.x + box.width - horizontalPadding
+        : box.x + box.width / 2;
     return (
-      <g key={node.id}>
+      <g
+        key={node.id}
+        data-flowloom-preview-node-id={node.id}
+        data-flowloom-preview-role={node.data.schematicRole}
+        data-flowloom-preview-kind={node.data.kind}
+      >
+        <rect
+          data-flowloom-preview-node-box={node.id}
+          x={box.x}
+          y={box.y}
+          width={box.width}
+          height={box.height}
+          fill="transparent"
+          stroke="none"
+          pointerEvents="none"
+        />
         {isFrame ? (
           <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={node.data.radius} fill={node.data.fill} stroke={node.data.stroke} strokeWidth={node.data.borderWidth} />
         ) : node.data.kind === 'ellipse' ? (
@@ -461,24 +440,45 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
             x={box.x}
             y={box.y}
             width={box.width}
-            height={isScientificShape ? box.height * 0.82 : box.height}
+            height={visualHeight}
             fill={node.data.fill}
             stroke={node.data.stroke}
             strokeWidth={node.data.borderWidth}
             radius={node.data.radius}
+            variant={node.data.scientificVariant}
           />
         )}
-        {lines.map((line, index) => (
-          <text
-            key={`${node.id}-${index}`}
-            x={isFrame ? box.x + 13 : box.x + box.width / 2}
-            y={startY + index * fontSize * 1.18}
-            fill={node.data.textColor}
-            fontSize={fontSize}
-            fontWeight={node.data.fontWeight}
-            textAnchor={isFrame ? 'start' : 'middle'}
-          >{line}</text>
-        ))}
+        <g data-flowloom-preview-label={node.id}>
+          {lines.map((line, index) => (
+            <text
+              key={`${node.id}-${index}`}
+              data-flowloom-preview-label-line={node.id}
+              data-flowloom-preview-line-index={index}
+              x={textX}
+              y={box.y + textLayout.labelStartY + index * textLayout.labelLineHeight}
+              fill={node.data.textColor}
+              fontSize={fontSize}
+              fontWeight={node.data.fontWeight}
+              textAnchor={textAnchor}
+            >{line}</text>
+          ))}
+        </g>
+        <g data-flowloom-preview-description={node.id}>
+          {descriptionLines.map((description, index) => (
+            <text
+              key={`${node.id}-description-${index}`}
+              data-flowloom-preview-description-line={node.id}
+              data-flowloom-preview-line-index={index}
+              x={textX}
+              y={box.y + textLayout.descriptionStartY + index * textLayout.descriptionLineHeight}
+              fill={node.data.textColor}
+              fillOpacity="0.82"
+              fontSize={descriptionSize}
+              fontWeight="500"
+              textAnchor={textAnchor}
+            >{description}</text>
+          ))}
+        </g>
       </g>
     );
   };
@@ -486,28 +486,71 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
     <svg
       className="schematic-svg-preview"
       viewBox={`0 0 ${schematic.width} ${schematic.height}`}
+      data-flowloom-preview-layout={schematic.layout}
+      data-flowloom-preview-template-id={schematic.templateId}
       role="img"
       aria-label={`${schematic.title} 结构预览`}
     >
       <defs>
         {schematic.edges.map((edge, index) => (
           <marker key={edge.id} id={`${markerPrefix}-arrow-${index}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-            <path d="M 1 1 L 9 5 L 1 9 Z" fill={edge.data?.color ?? '#4B5864'} />
+            <path
+              d={`M 1 1 L 9 5 L 1 9${edge.data?.arrowEnd === 'open' ? '' : ' Z'}`}
+              fill={edge.data?.arrowEnd === 'open' ? 'none' : edge.data?.color ?? '#4B5864'}
+              stroke={edge.data?.color ?? '#4B5864'}
+              strokeWidth="1.2"
+            />
           </marker>
         ))}
       </defs>
       {backgroundNodes.map(renderNode)}
-      {schematic.edges.map((edge, index) => (
-        <path
-          key={edge.id}
-          d={edgePath(edge)}
-          fill="none"
-          stroke={edge.data?.color ?? '#4B5864'}
-          strokeWidth={edge.data?.width ?? 1.65}
-          strokeDasharray={edge.data?.lineStyle === 'dashed' ? '8 6' : edge.data?.lineStyle === 'dotted' ? '2 5' : undefined}
-          markerEnd={edge.data?.arrowEnd === 'none' ? undefined : `url(#${markerPrefix}-arrow-${index})`}
-        />
-      ))}
+      {schematic.edges.map((edge, index) => {
+        const route = edgeRoute(edge);
+        if (!route) return null;
+        const edgeLabel = String(edge.data?.label ?? edge.label ?? '').trim();
+        const labelFontSize = Number(edge.data?.labelFontSize ?? 22);
+        const labelBaseline = route.label.y - labelFontSize * 0.35;
+        const labelPaddingX = Math.max(5, labelFontSize * 0.28);
+        const labelPaddingY = Math.max(2, labelFontSize * 0.14);
+        const labelWidth = estimateSvgTextWidth(edgeLabel, labelFontSize) + labelPaddingX * 2;
+        const labelHeight = labelFontSize * 1.08 + labelPaddingY * 2;
+        return (
+          <g key={edge.id} data-flowloom-preview-edge-id={edge.id}>
+            <path
+              d={route.path}
+              fill="none"
+              stroke={edge.data?.color ?? '#4B5864'}
+              strokeWidth={edge.data?.width ?? 1.65}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray={edge.data?.lineStyle === 'dashed' ? '8 6' : edge.data?.lineStyle === 'dotted' ? '2 5' : undefined}
+              markerEnd={edge.data?.arrowEnd === 'none' ? undefined : `url(#${markerPrefix}-arrow-${index})`}
+            />
+            {edgeLabel && (
+              <g data-flowloom-edge-label="true">
+                <rect
+                  data-flowloom-edge-label-bg="true"
+                  x={route.label.x - labelWidth / 2}
+                  y={labelBaseline - labelFontSize * 0.88 - labelPaddingY}
+                  width={labelWidth}
+                  height={labelHeight}
+                  rx="3"
+                  fill="#ffffff"
+                  fillOpacity="0.96"
+                />
+                <text
+                  x={route.label.x}
+                  y={labelBaseline}
+                  fill={edge.data?.color ?? '#4B5864'}
+                  fontSize={labelFontSize}
+                  fontWeight="650"
+                  textAnchor="middle"
+                >{edgeLabel}</text>
+              </g>
+            )}
+          </g>
+        );
+      })}
       {foregroundNodes.map(renderNode)}
     </svg>
   );
@@ -524,16 +567,30 @@ function SchematicEditor({
 }) {
   const selectedTemplate = SCIENTIFIC_SCHEMATIC_TEMPLATES.find((template) => template.id === options.templateId) ?? SCIENTIFIC_SCHEMATIC_TEMPLATES[0];
   const figureRecipe = getScientificFigureRecipe(options.templateId);
+  const layoutLabel = schematic.layout === 'single-column'
+    ? '89 mm 单栏重排'
+    : schematic.layout === 'presentation'
+      ? '16:9 汇报重排'
+      : schematic.layout === 'double-column'
+        ? '180 mm 双栏排版'
+        : '自由画布';
   const selectTemplate = (templateId: ScientificSchematicTemplateId) => onChange({
     ...options,
     templateId,
     title: defaultScientificSchematicTitle(templateId, options.language),
+    backbone: defaultScientificSchematicBackbone(templateId, options.language),
   });
-  const selectLanguage = (language: ScientificSchematicOptions['language']) => onChange({
-    ...options,
-    language,
-    title: defaultScientificSchematicTitle(options.templateId, language),
-  });
+  const selectLanguage = (language: ScientificSchematicOptions['language']) => {
+    const previousDefault = defaultScientificSchematicBackbone(options.templateId, options.language);
+    onChange({
+      ...options,
+      language,
+      title: defaultScientificSchematicTitle(options.templateId, language),
+      backbone: options.backbone === previousDefault
+        ? defaultScientificSchematicBackbone(options.templateId, language)
+        : options.backbone,
+    });
+  };
   return (
     <div className="scientific-schematic-workspace">
       <section className="scientific-schematic-config" aria-label="论文示意图配置">
@@ -575,9 +632,9 @@ function SchematicEditor({
             <span className="field-label">视觉风格</span>
             <div className="scientific-segmented" role="group" aria-label="示意图视觉风格">
               {([
-                ['conference', '柔彩分区'],
-                ['technical', '克制科技'],
-                ['monochrome', '黑白友好'],
+                ['conference', '论文彩色'],
+                ['technical', '汇报增强'],
+                ['monochrome', '黑白印刷'],
               ] as const).map(([value, label]) => <button key={value} className={options.style === value ? 'is-active' : ''} aria-pressed={options.style === value} onClick={() => onChange({ ...options, style: value })}>{label}</button>)}
             </div>
           </div>
@@ -638,8 +695,8 @@ function SchematicEditor({
 
       <section className="scientific-preview-pane scientific-schematic-preview" aria-label="论文示意图预览">
         <div className="scientific-preview-header">
-          <strong>原生图元预览</strong>
-          <span>{schematic.nodes.length} 个对象 · {schematic.edges.length} 条连接</span>
+          <strong>投稿级原生图元预览</strong>
+          <span>{layoutLabel} · {schematic.nodes.length} 个对象 · {schematic.edges.length} 条连接</span>
         </div>
         <div className="schematic-preview-stage"><SchematicPreview schematic={schematic} /></div>
         <div className="schematic-reference-strip">
@@ -653,8 +710,8 @@ function SchematicEditor({
   );
 }
 
-function QualityView({ nodes, figure }: { nodes: FlowNode[]; figure?: ScientificFigureSpec }) {
-  const issues = useMemo(() => auditScientificFigure(nodes, figure), [figure, nodes]);
+function QualityView({ nodes, edges, figure }: { nodes: FlowNode[]; edges: FlowEdge[]; figure?: ScientificFigureSpec }) {
+  const issues = useMemo(() => auditScientificFigure(nodes, figure, edges), [edges, figure, nodes]);
   const counts = {
     error: issues.filter((issue) => issue.severity === 'error').length,
     warning: issues.filter((issue) => issue.severity === 'warning').length,
@@ -674,7 +731,7 @@ function QualityView({ nodes, figure }: { nodes: FlowNode[]; figure?: Scientific
         ) : issues.map((issue) => (
           <article key={issue.id} className={`quality-issue quality-issue--${issue.severity}`}>
             <span>{issue.severity === 'error' ? <TriangleAlert size={17} /> : issue.severity === 'warning' ? <TriangleAlert size={17} /> : <Info size={17} />}</span>
-            <div><strong>{issue.title}</strong><p>{issue.detail}</p>{issue.nodeIds && <small>涉及 {issue.nodeIds.length} 个对象</small>}</div>
+            <div><strong>{issue.title}</strong><p>{issue.detail}</p>{(issue.nodeIds || issue.edgeIds) && <small>{issue.nodeIds ? `${issue.nodeIds.length} 个对象` : ''}{issue.nodeIds && issue.edgeIds ? ' · ' : ''}{issue.edgeIds ? `${issue.edgeIds.length} 条连接` : ''}</small>}</div>
           </article>
         ))}
       </section>
@@ -683,7 +740,7 @@ function QualityView({ nodes, figure }: { nodes: FlowNode[]; figure?: Scientific
   );
 }
 
-export function ScientificDialog({ open, nodes, figure, onClose, onConfigureFigure, onInsertChart, onInsertSchematic }: ScientificDialogProps) {
+export function ScientificDialog({ open, nodes, edges, figure, onClose, onConfigureFigure, onInsertChart, onInsertSchematic }: ScientificDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const [tab, setTab] = useState<ScientificTab>('figure');
@@ -724,7 +781,10 @@ export function ScientificDialog({ open, nodes, figure, onClose, onConfigureFigu
     uncertaintyDefinition: uncertainty,
   }), [chartTitle, chartType, fields, sourceData, sourceName, uncertainty, xUnit, yUnit]);
 
-  const schematic = useMemo(() => createScientificSchematic(schematicOptions), [schematicOptions]);
+  const schematic = useMemo(
+    () => createScientificSchematic(schematicOptions, figureDraft),
+    [figureDraft, schematicOptions],
+  );
 
   useEffect(() => {
     if (!open || tab !== 'chart') return;
@@ -885,7 +945,7 @@ export function ScientificDialog({ open, nodes, figure, onClose, onConfigureFigu
           />
         )}
         {tab === 'schematic' && <SchematicEditor options={schematicOptions} schematic={schematic} onChange={setSchematicOptions} />}
-        {tab === 'quality' && <QualityView nodes={nodes} figure={figure} />}
+        {tab === 'quality' && <QualityView nodes={nodes} edges={edges} figure={figure} />}
       </div>
       <div className="dialog-footer scientific-dialog__footer">
         <span className="scientific-footer-status">

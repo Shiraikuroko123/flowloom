@@ -1,17 +1,45 @@
 import type {
   FlowEdge,
   FlowNode,
+  ScientificConnectorSemantic,
   ScientificProvenance,
+  ScientificFigureSpec,
   ScientificSchematicDensity,
   ScientificSchematicLanguage,
+  ScientificSchematicLayout,
   ScientificSchematicOptions,
   ScientificSchematicRole,
   ScientificSchematicStyle,
   ScientificSchematicTemplateId,
+  ScientificVisualVariant,
+  ScientificRouteSide,
   ShapeKind,
 } from '../types';
-import { createEdgeMarker, createFlowEdge, createFlowNode, normalizeGraph } from './diagram';
+import {
+  createEdgeMarker,
+  createFlowEdge,
+  createFlowNode,
+  estimateSvgTextWidth,
+  normalizeGraph,
+} from './diagram';
 import { createId } from './id';
+import {
+  PUBLICATION_STROKES,
+  PUBLICATION_TYPOGRAPHY,
+  mmToPx,
+  pointsToScientificUnits,
+} from './scientific';
+import {
+  SCIENTIFIC_CONNECTOR_STYLES,
+  feedbackHandles,
+  inferScientificRouteSide,
+} from './scientificRouting';
+import {
+  layoutSchematicNodeContent,
+  scientificNodeTextMaxWidth,
+  scientificNodeTextPaddingX,
+  scientificNodeTextPaddingY,
+} from './scientificNodeLayout';
 
 export interface ScientificSchematicReference {
   arxivId: string;
@@ -37,6 +65,9 @@ export interface EditableScientificSchematic {
   width: number;
   height: number;
   references: ScientificSchematicReference[];
+  layout: ScientificSchematicLayout;
+  targetWidthMm?: number;
+  targetHeightMm?: number;
 }
 
 export const SCIENTIFIC_SCHEMATIC_TEMPLATES: ScientificSchematicTemplate[] = [
@@ -204,8 +235,25 @@ export const DEFAULT_SCIENTIFIC_SCHEMATIC_OPTIONS: ScientificSchematicOptions = 
   title: 'Vision-Language-Action Policy',
   backbone: 'VLM Backbone',
   style: 'conference',
-  density: 'standard',
+  density: 'detailed',
   language: 'en',
+};
+
+const SCIENTIFIC_BACKBONE_DEFAULTS: Record<ScientificSchematicTemplateId, { en: string; zh: string }> = {
+  'multimodal-foundation': { en: 'Multimodal LLM', zh: '多模态大模型' },
+  'vision-language-bridge': { en: 'Frozen LLM', zh: '冻结大模型' },
+  'vla-policy': { en: 'VLM Backbone', zh: 'VLM 主干' },
+  'prompt-conditioned-agent': { en: 'Causal Transformer', zh: '因果 Transformer' },
+  'embodied-loop': { en: 'Policy', zh: '策略模型' },
+  'train-deploy': { en: 'Generalist Policy', zh: '通用策略模型' },
+  'llm-training-pipeline': { en: 'Base Model', zh: '基础模型' },
+  'moe-routing': { en: 'Sparse MoE', zh: '稀疏专家模型' },
+  'rag-tool-agent': { en: 'Grounded LLM', zh: '证据增强 LLM' },
+  'reasoning-trace': { en: 'Reasoner', zh: '推理模型' },
+  'robot-data-collection': { en: 'Policy Learner', zh: '策略学习器' },
+  'world-model-rollout': { en: 'Latent World Model', zh: '潜在世界模型' },
+  'sim-to-real': { en: 'Shared Policy', zh: '共享策略' },
+  'multi-embodiment-policy': { en: 'Shared Policy Backbone', zh: '共享策略主干' },
 };
 
 interface RoleColors {
@@ -292,6 +340,14 @@ interface NodeOptions {
   zIndex?: number;
   scientificRole?: FlowNode['data']['scientificRole'];
   provenance?: ScientificProvenance;
+  variant?: ScientificVisualVariant;
+  evidence?: FlowNode['data']['scientificEvidence'];
+  fill?: string;
+  stroke?: string;
+  borderWidth?: number;
+  radius?: number;
+  textPaddingX?: number;
+  textPaddingY?: number;
 }
 
 function densityRank(value: ScientificSchematicDensity): number {
@@ -314,17 +370,35 @@ function moduleNode(palette: SchematicPalette, input: NodeOptions): FlowNode {
     ...node.data,
     label: input.label,
     description: input.description,
-    fill: colors.fill,
-    stroke: colors.stroke,
+    fill: input.fill ?? colors.fill,
+    stroke: input.stroke ?? colors.stroke,
     textColor: colors.text,
-    borderWidth: input.role === 'frame' ? 1.4 : input.role === 'phase' ? 1 : 1.5,
-    radius: input.role === 'frame' || input.role === 'phase' ? 7 : 6,
-    fontSize: input.fontSize ?? (input.role === 'frame' ? 16 : input.role === 'phase' ? 13 : 13),
+    borderWidth: input.borderWidth ?? (input.role === 'frame'
+      ? PUBLICATION_STROKES.frame
+      : input.role === 'phase'
+        ? PUBLICATION_STROKES.secondary
+        : PUBLICATION_STROKES.primary),
+    radius: input.radius ?? (input.role === 'frame' || input.role === 'phase' ? 7 : 6),
+    fontSize: Math.max(
+      input.fontSize ?? 0,
+      input.role === 'frame'
+        ? PUBLICATION_TYPOGRAPHY.figureTitle
+        : input.role === 'phase'
+          ? PUBLICATION_TYPOGRAPHY.stageTitle
+          : input.role === 'annotation'
+            ? PUBLICATION_TYPOGRAPHY.annotation
+            : PUBLICATION_TYPOGRAPHY.moduleLabel,
+    ),
     fontWeight: input.fontWeight ?? (input.role === 'frame' ? 700 : input.role === 'phase' ? 650 : 650),
+    textAlign: input.role === 'frame' || input.role === 'phase' ? 'left' : node.data.textAlign,
     schematicRole: input.role,
     schematicDetail: input.detail ?? 'compact',
+    scientificTextPaddingX: input.textPaddingX,
+    scientificTextPaddingY: input.textPaddingY,
     scientificRole: input.scientificRole,
     provenance: input.provenance,
+    scientificVariant: input.variant,
+    scientificEvidence: input.evidence ?? 'schematic',
   };
   return node;
 }
@@ -334,16 +408,51 @@ interface EdgeOptions {
   routing?: 'smoothstep' | 'straight' | 'bezier';
   lineStyle?: 'solid' | 'dashed' | 'dotted';
   feedback?: boolean;
+  semantic?: ScientificConnectorSemantic;
+  routeSide?: ScientificRouteSide;
+  routeOffset?: number;
+  sourceHandle?: string;
+  targetHandle?: string;
   width?: number;
   arrowEnd?: 'none' | 'open' | 'closed';
 }
 
 function moduleEdge(palette: SchematicPalette, source: string, target: string, options: EdgeOptions = {}): FlowEdge {
   const routing = options.routing ?? 'smoothstep';
-  const color = options.feedback ? palette.feedback : palette.edge;
-  const width = options.width ?? (options.feedback ? 1.8 : 1.65);
-  const arrowEnd = options.arrowEnd ?? 'closed';
+  const semantic = options.semantic
+    ?? (options.feedback
+      ? 'feedback'
+      : options.lineStyle === 'dotted'
+        ? 'optional'
+        : options.lineStyle === 'dashed' && options.arrowEnd === 'open'
+          ? 'gradient'
+          : 'data');
+  const semanticStyle = SCIENTIFIC_CONNECTOR_STYLES[semantic];
+  const monochrome = palette === PALETTES.monochrome;
+  const color = monochrome
+    ? (semantic === 'feedback' ? palette.feedback : palette.edge)
+    : semantic === 'feedback'
+      ? palette.feedback
+      : semantic === 'gradient'
+        ? palette.loss.stroke
+        : semantic === 'optional'
+          ? palette.annotation.stroke
+          : semantic === 'broadcast'
+            ? palette.encoder.stroke
+            : semantic === 'temporal'
+              ? palette.dataset.stroke
+              : semantic === 'control'
+                ? palette.action.stroke
+                : palette.edge;
+  const width = Math.max(
+    options.width ?? 0,
+    semanticStyle.width,
+    semantic === 'feedback' ? PUBLICATION_STROKES.primary : PUBLICATION_STROKES.secondary,
+  );
+  const arrowEnd = options.arrowEnd ?? semanticStyle.arrowEnd;
   const edge = createFlowEdge(source, target, options.label, routing);
+  edge.sourceHandle = options.sourceHandle;
+  edge.targetHandle = options.targetHandle;
   edge.selected = false;
   edge.data = {
     ...edge.data!,
@@ -351,8 +460,11 @@ function moduleEdge(palette: SchematicPalette, source: string, target: string, o
     color,
     width,
     routing,
-    lineStyle: options.lineStyle ?? (options.feedback ? 'dashed' : 'solid'),
+    lineStyle: options.lineStyle ?? semanticStyle.lineStyle,
     arrowEnd,
+    scientificSemantic: semantic,
+    routeSide: options.routeSide,
+    routeOffset: options.routeOffset,
   };
   edge.style = {
     ...edge.style,
@@ -362,6 +474,54 @@ function moduleEdge(palette: SchematicPalette, source: string, target: string, o
   };
   edge.markerEnd = createEdgeMarker(arrowEnd, color);
   return edge;
+}
+
+function finalizeScientificEdges(nodes: FlowNode[], edges: FlowEdge[]): FlowEdge[] {
+  const boxes = new Map(nodes.map((node) => [node.id, {
+    x: node.position.x,
+    y: node.position.y,
+    width: Number(node.style?.width ?? node.measured?.width ?? node.width ?? 1),
+    height: Number(node.style?.height ?? node.measured?.height ?? node.height ?? 1),
+  }]));
+  return edges.map((edge) => {
+    const source = boxes.get(edge.source);
+    const target = boxes.get(edge.target);
+    if (!source || !target) return edge;
+    if (edge.data?.scientificSemantic === 'feedback') {
+      const routeSide = edge.data.routeSide ?? inferScientificRouteSide(source, target);
+      const handles = feedbackHandles(routeSide);
+      return {
+        ...edge,
+        type: 'scientific',
+        sourceHandle: edge.sourceHandle ?? handles.sourceHandle,
+        targetHandle: edge.targetHandle ?? handles.targetHandle,
+        data: { ...edge.data, routeSide },
+      };
+    }
+    if (edge.sourceHandle && edge.targetHandle) return { ...edge, type: 'scientific' };
+    const sourceCenter = { x: source.x + source.width / 2, y: source.y + source.height / 2 };
+    const targetCenter = { x: target.x + target.width / 2, y: target.y + target.height / 2 };
+    const verticalGap = Math.max(
+      target.y - (source.y + source.height),
+      source.y - (target.y + target.height),
+    );
+    const horizontalGap = Math.max(
+      target.x - (source.x + source.width),
+      source.x - (target.x + target.width),
+    );
+    const horizontal = horizontalGap >= 16 && verticalGap < 16
+      ? true
+      : verticalGap >= 16
+        ? false
+        : Math.abs(targetCenter.x - sourceCenter.x) >= Math.abs(targetCenter.y - sourceCenter.y);
+    const forward = horizontal ? targetCenter.x >= sourceCenter.x : targetCenter.y >= sourceCenter.y;
+    return {
+      ...edge,
+      type: 'scientific',
+      sourceHandle: horizontal ? (forward ? 'right' : 'left') : (forward ? 'bottom' : 'top'),
+      targetHandle: horizontal ? (forward ? 'left' : 'right') : (forward ? 'top' : 'bottom'),
+    };
+  });
 }
 
 interface Blueprint {
@@ -456,46 +616,65 @@ function buildVlaPolicy(options: ScientificSchematicOptions, provenance: Scienti
   const palette = PALETTES[options.style];
   const t = (en: string, zh: string) => text(options.language, en, zh);
   const nodes = [
-    moduleNode(palette, { id: 'vla-root', kind: 'group', role: 'frame', x: 0, y: 0, width: 1360, height: 690, label: options.title, scientificRole: 'schematic-root', provenance }),
-    moduleNode(palette, { id: 'vla-perception', kind: 'group', role: 'phase', x: 28, y: 70, width: 405, height: 540, label: t('Observation and encoding', '观察与编码') }),
-    moduleNode(palette, { id: 'vla-reasoning', kind: 'group', role: 'phase', x: 458, y: 70, width: 500, height: 540, label: t('Multimodal reasoning', '多模态推理') }),
-    moduleNode(palette, { id: 'vla-control', kind: 'group', role: 'phase', x: 984, y: 70, width: 348, height: 540, label: t('Action and embodiment', '动作与机器人') }),
-    moduleNode(palette, { id: 'vla-image', kind: 'scientific-image-frame', role: 'modality', x: 62, y: 118, width: 145, height: 98, label: t('Camera observation', '相机观察') }),
-    moduleNode(palette, { id: 'vla-language', role: 'modality', x: 62, y: 254, width: 145, height: 78, label: t('Language instruction', '语言指令') }),
-    moduleNode(palette, { id: 'vla-state', role: 'modality', x: 62, y: 380, width: 145, height: 78, label: t('Proprioceptive state', '本体状态') }),
-    moduleNode(palette, { id: 'vla-vision', role: 'encoder', x: 244, y: 128, width: 150, height: 78, label: t('Vision encoders', '视觉编码器'), description: t('global + local features', '全局 + 局部特征') }),
-    moduleNode(palette, { id: 'vla-tokenizer', role: 'encoder', x: 244, y: 254, width: 150, height: 78, label: t('Text tokenizer', '文本分词器') }),
-    moduleNode(palette, { id: 'vla-state-projector', role: 'bridge', x: 244, y: 380, width: 150, height: 78, label: t('State projector', '状态投影器') }),
-    moduleNode(palette, { id: 'vla-token-sequence', kind: 'scientific-token-strip', role: 'token', x: 495, y: 116, width: 425, height: 82, label: t('[VISION]  instruction  [STATE]  action queries', '[视觉] 指令 [状态] 动作查询'), description: t('shared embedding sequence', '统一嵌入序列') }),
-    moduleNode(palette, { id: 'vla-backbone', kind: 'scientific-transformer', role: 'backbone', x: 510, y: 242, width: 250, height: 190, label: options.backbone || t('VLM backbone', 'VLM 主干'), description: t('language-conditioned visual reasoning', '语言条件视觉推理'), fontSize: 18 }),
-    moduleNode(palette, { id: 'vla-action-expert', kind: 'scientific-layer-stack', role: 'policy', x: 792, y: 242, width: 130, height: 190, label: t('Action\nexpert', '动作\n专家'), description: t('flow / diffusion', '流匹配 / 扩散'), fontSize: 15 }),
-    moduleNode(palette, { id: 'vla-training-loss', role: 'loss', x: 570, y: 488, width: 270, height: 72, label: t('Action objective + language loss', '动作目标 + 语言损失'), detail: 'detailed' }),
-    moduleNode(palette, { id: 'vla-action-chunk', kind: 'scientific-action-chunk', role: 'action', x: 1020, y: 144, width: 276, height: 86, label: t('Action chunk', '动作块'), description: t('T x {pose, gripper, base}', 'T × {位姿, 夹爪, 底盘}') }),
-    moduleNode(palette, { id: 'vla-safety', role: 'policy', x: 1020, y: 286, width: 132, height: 72, label: t('Safety filter', '安全过滤'), detail: 'standard' }),
-    moduleNode(palette, { id: 'vla-controller', role: 'action', x: 1164, y: 286, width: 132, height: 72, label: t('Controller', '控制器') }),
-    moduleNode(palette, { id: 'vla-robot', kind: 'scientific-robot-arm', role: 'environment', x: 1072, y: 412, width: 172, height: 146, label: t('Robot + environment', '机器人 + 环境'), description: t('closed-loop execution', '闭环执行') }),
-    moduleNode(palette, { id: 'vla-feedback', kind: 'note', role: 'annotation', x: 1008, y: 560, width: 296, height: 42, label: t('New observation at every control step', '每个控制步返回新的观察'), detail: 'detailed', fontSize: 11, fontWeight: 500 }),
+    moduleNode(palette, { id: 'vla-root', kind: 'group', role: 'frame', x: 0, y: 0, width: 1720, height: 820, label: options.title, scientificRole: 'schematic-root', provenance }),
+    moduleNode(palette, { id: 'vla-perception', kind: 'group', role: 'phase', x: 28, y: 76, width: 324, height: 684, label: t('A  Observe', 'A  观察') }),
+    moduleNode(palette, { id: 'vla-representation', kind: 'group', role: 'phase', x: 374, y: 76, width: 374, height: 684, label: t('B  Encode and align', 'B  编码与对齐') }),
+    moduleNode(palette, { id: 'vla-reasoning', kind: 'group', role: 'phase', x: 770, y: 76, width: 438, height: 684, label: t('C  Reason and predict', 'C  推理与预测') }),
+    moduleNode(palette, { id: 'vla-control', kind: 'group', role: 'phase', x: 1230, y: 76, width: 462, height: 684, label: t('D  Select and execute', 'D  选择与执行') }),
+    moduleNode(palette, { id: 'vla-scene', kind: 'scientific-scene-frame', role: 'modality', x: 62, y: 120, width: 256, height: 174, label: t('RGB-D workspace', 'RGB-D 操作场景'), description: t('objects + robot + camera', '物体 + 机器人 + 相机') }),
+    moduleNode(palette, { id: 'vla-language', kind: 'scientific-prompt-card', role: 'modality', x: 62, y: 332, width: 256, height: 122, label: t('Language instruction', '语言指令'), description: t('"place the blue cup on the tray"', '“把蓝色杯子放到托盘上”') }),
+    moduleNode(palette, { id: 'vla-state', kind: 'scientific-token-strip', role: 'modality', x: 62, y: 492, width: 256, height: 90, label: t('Proprioceptive state', '本体状态'), description: t('q, dq, gripper, base', '关节、速度、夹爪、底盘') }),
+    moduleNode(palette, { id: 'vla-sensor-meta', kind: 'scientific-metric-panel', role: 'annotation', x: 92, y: 626, width: 196, height: 102, label: t('Sensor cadence', '传感器节奏'), description: t('20 Hz · 7 DoF · 2 views', '20 Hz · 7 自由度 · 2 视角'), detail: 'standard' }),
+    moduleNode(palette, { id: 'vla-vision', kind: 'scientific-transformer', role: 'encoder', x: 410, y: 126, width: 142, height: 150, label: t('Vision encoder', '视觉编码器'), description: t('global + local features', '全局 + 局部特征') }),
+    moduleNode(palette, { id: 'vla-feature-map', kind: 'scientific-feature-map', role: 'encoder', x: 580, y: 138, width: 132, height: 132, label: t('Visual tokens', '视觉 Token'), description: t('multi-scale patches', '多尺度图块') }),
+    moduleNode(palette, { id: 'vla-tokenizer', role: 'encoder', x: 410, y: 344, width: 142, height: 86, label: t('Text tokenizer', '文本分词器'), description: t('instruction tokens', '指令 Token') }),
+    moduleNode(palette, { id: 'vla-language-token', kind: 'scientific-token-strip', role: 'token', x: 580, y: 342, width: 132, height: 90, label: t('Text tokens', '文本 Token') }),
+    moduleNode(palette, { id: 'vla-state-projector', role: 'bridge', x: 410, y: 500, width: 142, height: 86, label: t('State projector', '状态投影器'), description: t('shared latent space', '统一潜在空间') }),
+    moduleNode(palette, { id: 'vla-state-space', kind: 'scientific-embedding-space', role: 'bridge', x: 580, y: 486, width: 132, height: 118, label: t('State embedding', '状态嵌入') }),
+    moduleNode(palette, { id: 'vla-fusion', kind: 'scientific-token-strip', role: 'token', x: 410, y: 638, width: 302, height: 88, label: t('[VIS] instruction [STATE] action queries', '[视觉] 指令 [状态] 动作查询'), description: t('ordered multimodal sequence', '有序多模态序列') }),
+    moduleNode(palette, { id: 'vla-token-sequence', kind: 'scientific-token-strip', role: 'token', x: 808, y: 122, width: 360, height: 88, label: t('Shared causal context', '共享因果上下文'), description: t('observation window + action queries', '观察窗口 + 动作查询') }),
+    moduleNode(palette, { id: 'vla-backbone', kind: 'scientific-transformer', role: 'backbone', x: 812, y: 254, width: 224, height: 214, label: options.backbone || t('VLM backbone', 'VLM 主干'), description: t('language-conditioned visual reasoning', '语言条件视觉推理'), fontSize: 18 }),
+    moduleNode(palette, { id: 'vla-attention', kind: 'scientific-attention-map', role: 'annotation', x: 1062, y: 266, width: 112, height: 124, label: t('Cross-modal attention', '跨模态注意力'), detail: 'standard' }),
+    moduleNode(palette, { id: 'vla-policy-latent', kind: 'scientific-feature-map', role: 'policy', x: 1062, y: 414, width: 112, height: 112, label: t('Policy latent', '策略潜变量'), detail: 'standard' }),
+    moduleNode(palette, { id: 'vla-action-expert', kind: 'scientific-layer-stack', role: 'policy', x: 812, y: 530, width: 192, height: 142, label: t('Action expert', '动作专家'), description: t('flow / diffusion head', '流匹配 / 扩散头'), fontSize: 15 }),
+    moduleNode(palette, { id: 'vla-uncertainty', kind: 'scientific-uncertainty-band', role: 'loss', x: 1032, y: 538, width: 144, height: 126, label: t('Trajectory uncertainty', '轨迹不确定性'), detail: 'standard' }),
+    moduleNode(palette, { id: 'vla-training-loss', kind: 'scientific-loss-target', role: 'loss', x: 1002, y: 674, width: 150, height: 72, label: t('Action + language objective', '动作 + 语言目标'), detail: 'detailed' }),
+    moduleNode(palette, { id: 'vla-decision', kind: 'scientific-decision-gate', role: 'policy', x: 1268, y: 122, width: 198, height: 132, label: t('Candidate ranking', '候选动作排序'), description: t('feasibility · value · risk', '可行性 · 价值 · 风险') }),
+    moduleNode(palette, { id: 'vla-control-metrics', kind: 'scientific-metric-panel', role: 'annotation', x: 1490, y: 128, width: 166, height: 118, label: t('Control profile', '控制规格'), description: t('20 Hz · H=16 · 7 DoF', '20 Hz · H=16 · 7 自由度'), detail: 'standard' }),
+    moduleNode(palette, { id: 'vla-action-chunk', kind: 'scientific-action-chunk', role: 'action', x: 1268, y: 302, width: 388, height: 98, label: t('Selected action chunk', '已选动作块'), description: t('T x {pose, gripper, base}', 'T × {位姿, 夹爪, 底盘}') }),
+    moduleNode(palette, { id: 'vla-safety', role: 'policy', x: 1268, y: 446, width: 176, height: 80, label: t('Safety constraints', '安全约束'), description: t('workspace + collision', '工作空间 + 碰撞') }),
+    moduleNode(palette, { id: 'vla-controller', role: 'action', x: 1480, y: 446, width: 176, height: 80, label: t('Low-level controller', '底层控制器'), description: t('joint targets + impedance', '关节目标 + 阻抗') }),
+    moduleNode(palette, { id: 'vla-robot', kind: 'scientific-scene-frame', role: 'environment', x: 1322, y: 566, width: 280, height: 164, label: t('Robot in environment', '环境中的机器人'), description: t('closed-loop execution', '闭环执行') }),
+    moduleNode(palette, { id: 'vla-feedback', kind: 'note', role: 'annotation', x: 1258, y: 738, width: 408, height: 42, label: t('Dashed return: next observation and proprioceptive state', '虚线回流：下一观察与本体状态'), detail: 'detailed', fontSize: 11, fontWeight: 500 }),
   ];
   const edges = [
-    moduleEdge(palette, 'vla-image', 'vla-vision'),
+    moduleEdge(palette, 'vla-scene', 'vla-vision'),
+    moduleEdge(palette, 'vla-vision', 'vla-feature-map'),
     moduleEdge(palette, 'vla-language', 'vla-tokenizer'),
+    moduleEdge(palette, 'vla-tokenizer', 'vla-language-token'),
     moduleEdge(palette, 'vla-state', 'vla-state-projector'),
-    moduleEdge(palette, 'vla-vision', 'vla-token-sequence'),
-    moduleEdge(palette, 'vla-tokenizer', 'vla-token-sequence'),
-    moduleEdge(palette, 'vla-state-projector', 'vla-token-sequence'),
-    moduleEdge(palette, 'vla-token-sequence', 'vla-backbone'),
-    moduleEdge(palette, 'vla-token-sequence', 'vla-action-expert'),
+    moduleEdge(palette, 'vla-state-projector', 'vla-state-space'),
+    moduleEdge(palette, 'vla-feature-map', 'vla-fusion'),
+    moduleEdge(palette, 'vla-language-token', 'vla-fusion'),
+    moduleEdge(palette, 'vla-state-space', 'vla-fusion'),
+    moduleEdge(palette, 'vla-fusion', 'vla-token-sequence', { width: 2.4 }),
+    moduleEdge(palette, 'vla-token-sequence', 'vla-backbone', { width: 2.4 }),
+    moduleEdge(palette, 'vla-backbone', 'vla-attention', { lineStyle: 'dotted', arrowEnd: 'open' }),
+    moduleEdge(palette, 'vla-backbone', 'vla-policy-latent'),
     moduleEdge(palette, 'vla-backbone', 'vla-action-expert'),
-    moduleEdge(palette, 'vla-action-expert', 'vla-action-chunk'),
+    moduleEdge(palette, 'vla-policy-latent', 'vla-action-expert'),
+    moduleEdge(palette, 'vla-uncertainty', 'vla-action-expert', { lineStyle: 'dashed', arrowEnd: 'open' }),
+    moduleEdge(palette, 'vla-action-expert', 'vla-decision', { width: 2.2 }),
+    moduleEdge(palette, 'vla-decision', 'vla-action-chunk', { width: 2.4, label: t('select', '选择') }),
     moduleEdge(palette, 'vla-action-chunk', 'vla-safety'),
     moduleEdge(palette, 'vla-action-chunk', 'vla-controller'),
     moduleEdge(palette, 'vla-safety', 'vla-robot'),
     moduleEdge(palette, 'vla-controller', 'vla-robot'),
     moduleEdge(palette, 'vla-training-loss', 'vla-action-expert', { lineStyle: 'dashed', arrowEnd: 'open' }),
-    moduleEdge(palette, 'vla-robot', 'vla-image', { routing: 'bezier', feedback: true, label: t('observation', '新观察') }),
+    moduleEdge(palette, 'vla-robot', 'vla-scene', { routing: 'bezier', feedback: true, label: t('next observation', '下一观察') }),
     moduleEdge(palette, 'vla-robot', 'vla-state', { routing: 'bezier', feedback: true }),
   ];
-  return { nodes, edges, width: 1360, height: 690 };
+  return { nodes, edges, width: 1720, height: 820 };
 }
 
 function buildPromptAgent(options: ScientificSchematicOptions, provenance: ScientificProvenance): Blueprint {
@@ -621,33 +800,45 @@ function buildLlmTrainingPipeline(options: ScientificSchematicOptions, provenanc
   const palette = PALETTES[options.style];
   const t = (en: string, zh: string) => text(options.language, en, zh);
   const nodes = [
-    moduleNode(palette, { id: 'lt-root', kind: 'group', role: 'frame', x: 0, y: 0, width: 1500, height: 720, label: options.title, scientificRole: 'schematic-root', provenance }),
-    moduleNode(palette, { id: 'lt-data-phase', kind: 'group', role: 'phase', x: 24, y: 66, width: 250, height: 610, label: t('1 · Corpus curation', '1 · 语料策展') }),
-    moduleNode(palette, { id: 'lt-pretrain-phase', kind: 'group', role: 'phase', x: 290, y: 66, width: 250, height: 610, label: t('2 · Pretraining', '2 · 预训练') }),
-    moduleNode(palette, { id: 'lt-sft-phase', kind: 'group', role: 'phase', x: 556, y: 66, width: 250, height: 610, label: t('3 · Instruction tuning', '3 · 指令微调') }),
-    moduleNode(palette, { id: 'lt-align-phase', kind: 'group', role: 'phase', x: 822, y: 66, width: 286, height: 610, label: t('4 · Preference alignment', '4 · 偏好对齐') }),
-    moduleNode(palette, { id: 'lt-eval-phase', kind: 'group', role: 'phase', x: 1124, y: 66, width: 352, height: 610, label: t('5 · Evaluate and deploy', '5 · 评测与部署') }),
-    moduleNode(palette, { id: 'lt-raw-data', kind: 'scientific-dataset-stack', role: 'dataset', x: 60, y: 126, width: 180, height: 118, label: t('Raw web + code + books', '网页 + 代码 + 书籍') }),
-    moduleNode(palette, { id: 'lt-curation', role: 'bridge', x: 65, y: 286, width: 170, height: 76, label: t('Filter · deduplicate', '过滤 · 去重'), description: t('quality + safety', '质量 + 安全') }),
-    moduleNode(palette, { id: 'lt-mixture', kind: 'scientific-dataset-stack', role: 'dataset', x: 60, y: 410, width: 180, height: 118, label: t('Pretraining mixture', '预训练数据混合') }),
-    moduleNode(palette, { id: 'lt-base-model', kind: 'scientific-transformer', role: 'backbone', x: 325, y: 190, width: 180, height: 158, label: options.backbone || t('Base model', '基础模型') }),
-    moduleNode(palette, { id: 'lt-next-token', kind: 'scientific-loss-target', role: 'loss', x: 352, y: 438, width: 126, height: 118, label: t('Next-token loss', '下一 Token 损失') }),
-    moduleNode(palette, { id: 'lt-instruction-data', kind: 'scientific-dataset-stack', role: 'dataset', x: 592, y: 130, width: 180, height: 112, label: t('Instruction data', '指令数据') }),
-    moduleNode(palette, { id: 'lt-sft-model', kind: 'scientific-trainable', role: 'backbone', x: 606, y: 310, width: 154, height: 124, label: t('SFT checkpoint', 'SFT 检查点') }),
-    moduleNode(palette, { id: 'lt-sft-loss', kind: 'scientific-loss-target', role: 'loss', x: 626, y: 494, width: 116, height: 106, label: t('SFT loss', 'SFT 损失'), detail: 'standard' }),
-    moduleNode(palette, { id: 'lt-preference-data', kind: 'scientific-dataset-stack', role: 'dataset', x: 852, y: 126, width: 170, height: 112, label: t('Preference pairs', '偏好对') }),
-    moduleNode(palette, { id: 'lt-reward', kind: 'scientific-loss-target', role: 'loss', x: 846, y: 310, width: 120, height: 112, label: t('Reward / DPO', '奖励 / DPO') }),
-    moduleNode(palette, { id: 'lt-aligned-model', kind: 'scientific-trainable', role: 'policy', x: 972, y: 306, width: 116, height: 126, label: t('Aligned model', '对齐模型') }),
-    moduleNode(palette, { id: 'lt-safety-data', kind: 'scientific-dataset-stack', role: 'dataset', x: 906, y: 488, width: 160, height: 108, label: t('Safety red-team', '安全红队数据'), detail: 'standard' }),
-    moduleNode(palette, { id: 'lt-capability-plot', kind: 'scientific-mini-plot', role: 'action', x: 1152, y: 132, width: 140, height: 128, label: t('Capability', '能力评测') }),
-    moduleNode(palette, { id: 'lt-safety-plot', kind: 'scientific-mini-plot', role: 'loss', x: 1310, y: 132, width: 140, height: 128, label: t('Safety', '安全评测') }),
-    moduleNode(palette, { id: 'lt-deploy-model', kind: 'scientific-transformer', role: 'backbone', x: 1200, y: 330, width: 186, height: 158, label: t('Aligned checkpoint', '对齐后检查点') }),
-    moduleNode(palette, { id: 'lt-response', kind: 'scientific-token-strip', role: 'action', x: 1190, y: 548, width: 206, height: 76, label: t('Response tokens', '回答 Token') }),
+    moduleNode(palette, { id: 'lt-root', kind: 'group', role: 'frame', x: 0, y: 0, width: 1860, height: 840, label: options.title, scientificRole: 'schematic-root', provenance }),
+    moduleNode(palette, { id: 'lt-data-phase', kind: 'group', role: 'phase', x: 28, y: 76, width: 300, height: 700, label: t('1  Curate licensed data', '1  策展合规数据') }),
+    moduleNode(palette, { id: 'lt-pretrain-phase', kind: 'group', role: 'phase', x: 348, y: 76, width: 300, height: 700, label: t('2  Pretrain', '2  预训练') }),
+    moduleNode(palette, { id: 'lt-sft-phase', kind: 'group', role: 'phase', x: 668, y: 76, width: 312, height: 700, label: t('3  Instruction tune', '3  指令微调') }),
+    moduleNode(palette, { id: 'lt-align-phase', kind: 'group', role: 'phase', x: 1000, y: 76, width: 410, height: 700, label: t('4  Align preferences', '4  偏好对齐') }),
+    moduleNode(palette, { id: 'lt-eval-phase', kind: 'group', role: 'phase', x: 1430, y: 76, width: 402, height: 700, label: t('5  Evaluate and serve', '5  评测与服务') }),
+    moduleNode(palette, { id: 'lt-raw-data', kind: 'scientific-dataset-stack', role: 'dataset', x: 60, y: 124, width: 132, height: 116, label: t('Web · code · books', '网页 · 代码 · 书籍'), description: t('source + license tracked', '来源与许可可追踪') }),
+    moduleNode(palette, { id: 'lt-curation', kind: 'scientific-data-funnel', role: 'bridge', x: 210, y: 122, width: 104, height: 122, label: t('Filter + deduplicate', '过滤 + 去重'), description: t('quality · privacy · safety', '质量 · 隐私 · 安全') }),
+    moduleNode(palette, { id: 'lt-mixture', kind: 'scientific-dataset-stack', role: 'dataset', x: 78, y: 294, width: 206, height: 120, label: t('Audited training mixture', '审计后的训练混合'), description: t('domain and language balance', '领域与语言平衡') }),
+    moduleNode(palette, { id: 'lt-distribution', kind: 'scientific-probability-bars', role: 'dataset', x: 84, y: 466, width: 194, height: 124, label: t('Mixture distribution', '混合比例'), description: t('tokens by source family', '按来源统计 Token') , detail: 'standard' }),
+    moduleNode(palette, { id: 'lt-license-note', kind: 'note', role: 'annotation', x: 62, y: 638, width: 232, height: 90, label: t('Attach provenance, opt-out policy, and contamination report.', '附带来源、退出策略与污染检查报告。'), detail: 'detailed', fontSize: 11, fontWeight: 500 }),
+    moduleNode(palette, { id: 'lt-pretrain-tokens', kind: 'scientific-token-strip', role: 'token', x: 378, y: 126, width: 240, height: 88, label: t('Packed token batches', '打包 Token 批次'), description: t('document boundaries retained', '保留文档边界') }),
+    moduleNode(palette, { id: 'lt-base-model', kind: 'scientific-transformer', role: 'backbone', x: 406, y: 272, width: 184, height: 176, label: options.backbone || t('Base model', '基础模型'), description: t('causal language modeling', '因果语言建模'), fontSize: 16 }),
+    moduleNode(palette, { id: 'lt-next-token', kind: 'scientific-loss-target', role: 'loss', x: 430, y: 506, width: 136, height: 118, label: t('Next-token objective', '下一 Token 目标'), description: t('masked loss + schedule', '掩码损失 + 调度') }),
+    moduleNode(palette, { id: 'lt-pretrain-metrics', kind: 'scientific-metric-panel', role: 'annotation', x: 382, y: 652, width: 232, height: 94, label: t('Training telemetry', '训练遥测'), description: t('loss · tokens/s · compute', '损失 · 吞吐 · 计算量'), detail: 'standard' }),
+    moduleNode(palette, { id: 'lt-instruction-data', kind: 'scientific-prompt-card', role: 'dataset', x: 700, y: 122, width: 248, height: 126, label: t('Instruction examples', '指令样本'), description: t('task · response · rationale', '任务 · 回答 · 理由') }),
+    moduleNode(palette, { id: 'lt-sft-model', kind: 'scientific-trainable', role: 'backbone', x: 732, y: 310, width: 184, height: 154, label: t('SFT checkpoint', 'SFT 检查点'), description: t('supervised adaptation', '监督适配') }),
+    moduleNode(palette, { id: 'lt-sft-loss', kind: 'scientific-loss-target', role: 'loss', x: 754, y: 518, width: 140, height: 112, label: t('Response-only loss', '仅回答区损失'), detail: 'standard' }),
+    moduleNode(palette, { id: 'lt-sft-ablation', kind: 'scientific-ablation-table', role: 'annotation', x: 718, y: 652, width: 212, height: 94, label: t('Data scaling ablation', '数据规模消融'), detail: 'detailed' }),
+    moduleNode(palette, { id: 'lt-preference-data', kind: 'scientific-preference-pair', role: 'dataset', x: 1032, y: 122, width: 216, height: 132, label: t('Chosen / rejected pairs', '偏好 / 拒绝样本对'), description: t('human + synthetic judges', '人工 + 合成评审') }),
+    moduleNode(palette, { id: 'lt-red-team', kind: 'scientific-prompt-card', role: 'dataset', x: 1268, y: 130, width: 112, height: 118, label: t('Red-team prompts', '红队提示'), detail: 'standard' }),
+    moduleNode(palette, { id: 'lt-reward', kind: 'scientific-decision-gate', role: 'loss', x: 1044, y: 326, width: 194, height: 132, label: t('Reward / DPO signal', '奖励 / DPO 信号'), description: t('rank · margin · confidence', '排序 · 间隔 · 置信度') }),
+    moduleNode(palette, { id: 'lt-aligned-model', kind: 'scientific-trainable', role: 'policy', x: 1262, y: 314, width: 126, height: 154, label: t('Aligned checkpoint', '对齐检查点'), description: t('policy update', '策略更新') }),
+    moduleNode(palette, { id: 'lt-safety-data', kind: 'scientific-dataset-stack', role: 'dataset', x: 1046, y: 526, width: 190, height: 116, label: t('Safety + refusal set', '安全 + 拒答数据'), detail: 'standard' }),
+    moduleNode(palette, { id: 'lt-alignment-objective', kind: 'scientific-loss-target', role: 'loss', x: 1270, y: 526, width: 110, height: 112, label: t('KL / margin', 'KL / 间隔'), detail: 'standard' }),
+    moduleNode(palette, { id: 'lt-alignment-note', kind: 'note', role: 'annotation', x: 1064, y: 674, width: 294, height: 62, label: t('Report annotator mix, agreement, and preference uncertainty.', '报告标注者构成、一致性与偏好不确定性。'), detail: 'detailed', fontSize: 11, fontWeight: 500 }),
+    moduleNode(palette, { id: 'lt-capability-plot', kind: 'scientific-equation', role: 'action', x: 1458, y: 122, width: 174, height: 140, label: t('Evaluation contract', '评测协议'), description: t('tasks · baselines · seeds · CI', '任务 · 基线 · 随机种子 · 置信区间') }),
+    moduleNode(palette, { id: 'lt-safety-plot', kind: 'scientific-equation', role: 'loss', x: 1650, y: 128, width: 154, height: 126, label: t('Safety contract', '安全协议'), description: t('risk · calibration · refusal', '风险 · 校准 · 拒答') }),
+    moduleNode(palette, { id: 'lt-deploy-model', kind: 'scientific-transformer', role: 'backbone', x: 1510, y: 330, width: 210, height: 184, label: t('Release checkpoint', '发布检查点'), description: t('versioned + reproducible', '版本化 + 可复现'), fontSize: 16 }),
+    moduleNode(palette, { id: 'lt-response', kind: 'scientific-token-strip', role: 'action', x: 1458, y: 564, width: 180, height: 94, label: t('Response + citations', '回答 + 引用'), description: t('served output', '服务输出') }),
+    moduleNode(palette, { id: 'lt-uncertainty', kind: 'scientific-equation', role: 'annotation', x: 1650, y: 556, width: 154, height: 118, label: t('Drift checks', '漂移检查'), description: t('distribution · calibration', '分布 · 校准'), detail: 'standard' }),
+    moduleNode(palette, { id: 'lt-release-note', kind: 'note', role: 'annotation', x: 1494, y: 700, width: 278, height: 48, label: t('Evaluation failures return to curation, never directly to training.', '评测失败回到数据策展，不直接进入训练。'), detail: 'detailed', fontSize: 11, fontWeight: 500 }),
   ];
   const edges = [
     moduleEdge(palette, 'lt-raw-data', 'lt-curation'),
     moduleEdge(palette, 'lt-curation', 'lt-mixture'),
-    moduleEdge(palette, 'lt-mixture', 'lt-base-model'),
+    moduleEdge(palette, 'lt-mixture', 'lt-distribution', { lineStyle: 'dotted', arrowEnd: 'open' }),
+    moduleEdge(palette, 'lt-mixture', 'lt-pretrain-tokens', { width: 2.2 }),
+    moduleEdge(palette, 'lt-pretrain-tokens', 'lt-base-model'),
     moduleEdge(palette, 'lt-next-token', 'lt-base-model', { lineStyle: 'dashed', arrowEnd: 'open' }),
     moduleEdge(palette, 'lt-base-model', 'lt-sft-model', { width: 2.4, label: t('base', '基础') }),
     moduleEdge(palette, 'lt-instruction-data', 'lt-sft-model'),
@@ -655,13 +846,17 @@ function buildLlmTrainingPipeline(options: ScientificSchematicOptions, provenanc
     moduleEdge(palette, 'lt-sft-model', 'lt-aligned-model', { width: 2.4, label: t('instruct', '指令版') }),
     moduleEdge(palette, 'lt-preference-data', 'lt-reward'),
     moduleEdge(palette, 'lt-reward', 'lt-aligned-model'),
+    moduleEdge(palette, 'lt-red-team', 'lt-safety-data'),
     moduleEdge(palette, 'lt-safety-data', 'lt-aligned-model', { lineStyle: 'dashed' }),
+    moduleEdge(palette, 'lt-alignment-objective', 'lt-aligned-model', { lineStyle: 'dashed', arrowEnd: 'open' }),
     moduleEdge(palette, 'lt-aligned-model', 'lt-deploy-model', { width: 2.4, label: t('aligned', '对齐版') }),
     moduleEdge(palette, 'lt-deploy-model', 'lt-capability-plot'),
     moduleEdge(palette, 'lt-deploy-model', 'lt-safety-plot'),
     moduleEdge(palette, 'lt-deploy-model', 'lt-response'),
+    moduleEdge(palette, 'lt-deploy-model', 'lt-uncertainty', { lineStyle: 'dotted', arrowEnd: 'open' }),
+    moduleEdge(palette, 'lt-capability-plot', 'lt-curation', { routing: 'bezier', feedback: true, label: t('failure slices', '失败切片') }),
   ];
-  return { nodes, edges, width: 1500, height: 720 };
+  return { nodes, edges, width: 1860, height: 840 };
 }
 
 function buildMoeRouting(options: ScientificSchematicOptions, provenance: ScientificProvenance): Blueprint {
@@ -674,7 +869,7 @@ function buildMoeRouting(options: ScientificSchematicOptions, provenance: Scient
     moduleNode(palette, { id: 'moe-expert-phase', kind: 'group', role: 'phase', x: 542, y: 70, width: 450, height: 570, label: t('Expert bank', '专家阵列') }),
     moduleNode(palette, { id: 'moe-output-phase', kind: 'group', role: 'phase', x: 1014, y: 70, width: 278, height: 570, label: t('Weighted output', '加权输出') }),
     moduleNode(palette, { id: 'moe-input', kind: 'scientific-token-strip', role: 'token', x: 58, y: 142, width: 170, height: 82, label: t('Input tokens', '输入 Token') }),
-    moduleNode(palette, { id: 'moe-layer-inset', kind: 'scientific-transformer', role: 'backbone', x: 72, y: 344, width: 144, height: 150, label: t('Transformer layer', 'Transformer 层') }),
+    moduleNode(palette, { id: 'moe-layer-inset', kind: 'scientific-transformer', role: 'backbone', x: 72, y: 344, width: 144, height: 150, label: options.backbone || t('Sparse MoE', '稀疏专家模型') }),
     moduleNode(palette, { id: 'moe-router', role: 'bridge', x: 316, y: 150, width: 168, height: 86, label: t('Top-k router', 'Top-k 路由器'), description: t('token-wise gates', '逐 Token 门控') }),
     moduleNode(palette, { id: 'moe-gates', kind: 'scientific-mini-plot', role: 'token', x: 320, y: 330, width: 160, height: 130, label: t('Gate scores', '门控分数') }),
     moduleNode(palette, { id: 'moe-balance', kind: 'scientific-loss-target', role: 'loss', x: 342, y: 510, width: 116, height: 102, label: t('Load balance', '负载均衡'), detail: 'standard' }),
@@ -840,46 +1035,62 @@ function buildWorldModelRollout(options: ScientificSchematicOptions, provenance:
   const palette = PALETTES[options.style];
   const t = (en: string, zh: string) => text(options.language, en, zh);
   const nodes = [
-    moduleNode(palette, { id: 'wm-root', kind: 'group', role: 'frame', x: 0, y: 0, width: 1460, height: 740, label: options.title, scientificRole: 'schematic-root', provenance }),
-    moduleNode(palette, { id: 'wm-observe-phase', kind: 'group', role: 'phase', x: 28, y: 70, width: 252, height: 620, label: t('Current state', '当前状态') }),
-    moduleNode(palette, { id: 'wm-state-phase', kind: 'group', role: 'phase', x: 302, y: 70, width: 270, height: 620, label: t('Spatial world state', '空间世界状态') }),
-    moduleNode(palette, { id: 'wm-rollout-phase', kind: 'group', role: 'phase', x: 594, y: 70, width: 532, height: 620, label: t('Candidate future rollouts', '候选未来展开') }),
-    moduleNode(palette, { id: 'wm-act-phase', kind: 'group', role: 'phase', x: 1148, y: 70, width: 284, height: 620, label: t('Select and execute', '选择与执行') }),
-    moduleNode(palette, { id: 'wm-observation', kind: 'scientific-image-frame', role: 'modality', x: 72, y: 124, width: 164, height: 132, label: t('Current observation', '当前观察') }),
-    moduleNode(palette, { id: 'wm-goal', kind: 'callout', role: 'modality', x: 68, y: 306, width: 172, height: 86, label: t('Task goal', '任务目标') }),
-    moduleNode(palette, { id: 'wm-state-token', kind: 'scientific-token-strip', role: 'token', x: 58, y: 470, width: 190, height: 82, label: t('Robot state tokens', '机器人状态 Token') }),
-    moduleNode(palette, { id: 'wm-voxel', kind: 'scientific-voxel-grid', role: 'encoder', x: 350, y: 132, width: 174, height: 154, label: t('3D latent state', '3D 潜在状态') }),
-    moduleNode(palette, { id: 'wm-coordinate', kind: 'scientific-coordinate-frame', role: 'annotation', x: 382, y: 330, width: 110, height: 112, label: t('Robot frame', '机器人坐标系') }),
-    moduleNode(palette, { id: 'wm-model', kind: 'scientific-transformer', role: 'backbone', x: 346, y: 492, width: 182, height: 158, label: options.backbone || t('World model', '世界模型') }),
-    moduleNode(palette, { id: 'wm-rollout-a', kind: 'scientific-timeline', role: 'action', x: 636, y: 128, width: 330, height: 108, label: t('Future A · reachable', '未来 A · 可达') }),
-    moduleNode(palette, { id: 'wm-score-a', kind: 'scientific-loss-target', role: 'environment', x: 982, y: 126, width: 110, height: 112, label: t('Score 0.86', '评分 0.86') }),
-    moduleNode(palette, { id: 'wm-rollout-b', kind: 'scientific-timeline', role: 'action', x: 636, y: 310, width: 330, height: 108, label: t('Future B · collision', '未来 B · 碰撞') }),
-    moduleNode(palette, { id: 'wm-score-b', kind: 'scientific-loss-target', role: 'loss', x: 982, y: 308, width: 110, height: 112, label: t('Score 0.21', '评分 0.21') }),
-    moduleNode(palette, { id: 'wm-rollout-c', kind: 'scientific-timeline', role: 'annotation', x: 636, y: 492, width: 330, height: 108, label: t('Future C · uncertain', '未来 C · 不确定'), detail: 'standard' }),
-    moduleNode(palette, { id: 'wm-score-c', kind: 'scientific-loss-target', role: 'annotation', x: 982, y: 490, width: 110, height: 112, label: t('Score 0.44', '评分 0.44'), detail: 'standard' }),
-    moduleNode(palette, { id: 'wm-action', kind: 'scientific-action-chunk', role: 'policy', x: 1192, y: 140, width: 196, height: 88, label: t('Selected action chunk', '已选动作块') }),
-    moduleNode(palette, { id: 'wm-trajectory', kind: 'scientific-trajectory', role: 'action', x: 1182, y: 304, width: 216, height: 98, label: t('Control trajectory', '控制轨迹') }),
-    moduleNode(palette, { id: 'wm-robot', kind: 'scientific-robot-arm', role: 'environment', x: 1216, y: 470, width: 150, height: 156, label: t('Robot + environment', '机器人 + 环境') }),
+    moduleNode(palette, { id: 'wm-root', kind: 'group', role: 'frame', x: 0, y: 0, width: 1760, height: 860, label: options.title, scientificRole: 'schematic-root', provenance }),
+    moduleNode(palette, { id: 'wm-observe-phase', kind: 'group', role: 'phase', x: 28, y: 76, width: 300, height: 720, label: t('A  Current evidence', 'A  当前证据') }),
+    moduleNode(palette, { id: 'wm-state-phase', kind: 'group', role: 'phase', x: 350, y: 76, width: 300, height: 720, label: t('B  Latent world state', 'B  潜在世界状态') }),
+    moduleNode(palette, { id: 'wm-rollout-phase', kind: 'group', role: 'phase', x: 672, y: 76, width: 650, height: 720, label: t('C  Counterfactual futures', 'C  反事实未来') }),
+    moduleNode(palette, { id: 'wm-act-phase', kind: 'group', role: 'phase', x: 1344, y: 76, width: 388, height: 720, label: t('D  Decision and control', 'D  决策与控制') }),
+    moduleNode(palette, { id: 'wm-observation', kind: 'scientific-scene-frame', role: 'modality', x: 62, y: 124, width: 232, height: 174, label: t('Current RGB-D scene', '当前 RGB-D 场景'), description: t('robot · objects · geometry', '机器人 · 物体 · 几何') }),
+    moduleNode(palette, { id: 'wm-goal', kind: 'scientific-prompt-card', role: 'modality', x: 62, y: 340, width: 232, height: 120, label: t('Goal condition', '目标条件'), description: t('"put the cup on the tray"', '“把杯子放到托盘上”') }),
+    moduleNode(palette, { id: 'wm-state-token', kind: 'scientific-token-strip', role: 'token', x: 62, y: 504, width: 232, height: 88, label: t('Robot state history', '机器人状态历史'), description: t('q0:t · actions0:t-1', '状态0:t · 动作0:t-1') }),
+    moduleNode(palette, { id: 'wm-observation-meta', kind: 'scientific-metric-panel', role: 'annotation', x: 80, y: 646, width: 196, height: 108, label: t('Observation window', '观察窗口'), description: t('4 frames · 10 Hz · RGB-D', '4 帧 · 10 Hz · RGB-D'), detail: 'standard' }),
+    moduleNode(palette, { id: 'wm-voxel', kind: 'scientific-voxel-grid', role: 'encoder', x: 392, y: 124, width: 216, height: 160, label: t('3D spatial state', '3D 空间状态'), description: t('occupancy + object slots', '占据 + 物体槽位') }),
+    moduleNode(palette, { id: 'wm-feature-map', kind: 'scientific-feature-map', role: 'encoder', x: 392, y: 330, width: 216, height: 132, label: t('Latent feature volume', '潜在特征体'), description: t('multi-scale scene tokens', '多尺度场景 Token') }),
+    moduleNode(palette, { id: 'wm-model', kind: 'scientific-transformer', role: 'backbone', x: 410, y: 510, width: 180, height: 170, label: options.backbone || t('Predictive world model', '预测世界模型'), description: t('p(z[t+1] | z[t], a[t])', 'p(z[t+1] | z[t], a[t])'), fontSize: 16 }),
+    moduleNode(palette, { id: 'wm-coordinate', kind: 'scientific-coordinate-frame', role: 'annotation', x: 512, y: 684, width: 88, height: 88, label: t('Robot frame', '机器人坐标系'), detail: 'detailed' }),
+    moduleNode(palette, { id: 'wm-rollout-a', kind: 'scientific-scene-frame', role: 'environment', x: 706, y: 120, width: 210, height: 134, label: t('Future A · goal reached', '未来 A · 达成目标'), description: t('collision free', '无碰撞') }),
+    moduleNode(palette, { id: 'wm-trajectory-a', kind: 'scientific-trajectory', role: 'action', x: 938, y: 132, width: 202, height: 112, label: t('Candidate trajectory A', '候选轨迹 A'), description: t('smooth and feasible', '平滑且可行') }),
+    moduleNode(palette, { id: 'wm-score-a', kind: 'scientific-equation', role: 'environment', x: 1160, y: 132, width: 132, height: 112, label: 'P(success | τA)', description: t('symbolic score', '符号评分') }),
+    moduleNode(palette, { id: 'wm-rollout-b', kind: 'scientific-scene-frame', role: 'loss', x: 706, y: 334, width: 210, height: 134, label: t('Future B · collision', '未来 B · 发生碰撞'), description: t('workspace violation', '违反工作空间约束'), detail: 'standard' }),
+    moduleNode(palette, { id: 'wm-trajectory-b', kind: 'scientific-trajectory', role: 'loss', x: 938, y: 346, width: 202, height: 112, label: t('Candidate trajectory B', '候选轨迹 B'), detail: 'standard' }),
+    moduleNode(palette, { id: 'wm-score-b', kind: 'scientific-equation', role: 'loss', x: 1160, y: 346, width: 132, height: 112, label: 'R(contact | τB)', description: t('constraint cost', '约束代价'), detail: 'standard' }),
+    moduleNode(palette, { id: 'wm-rollout-c', kind: 'scientific-scene-frame', role: 'annotation', x: 706, y: 548, width: 210, height: 134, label: t('Future C · uncertain', '未来 C · 不确定'), description: t('occluded contact', '接触状态被遮挡'), detail: 'detailed' }),
+    moduleNode(palette, { id: 'wm-trajectory-c', kind: 'scientific-trajectory', role: 'annotation', x: 938, y: 560, width: 202, height: 112, label: t('Candidate trajectory C', '候选轨迹 C'), detail: 'detailed' }),
+    moduleNode(palette, { id: 'wm-score-c', kind: 'scientific-equation', role: 'annotation', x: 1160, y: 560, width: 132, height: 112, label: 'U(τC)', description: t('model uncertainty', '模型不确定性'), detail: 'detailed' }),
+    moduleNode(palette, { id: 'wm-rollout-note', kind: 'note', role: 'annotation', x: 760, y: 704, width: 478, height: 56, label: t('Every branch shares the same initial state; color denotes outcome, not method.', '所有分支共享同一初始状态；颜色表示结果，不表示方法。'), detail: 'detailed', fontSize: 11, fontWeight: 500 }),
+    moduleNode(palette, { id: 'wm-decision', kind: 'scientific-decision-gate', role: 'policy', x: 1376, y: 126, width: 188, height: 142, label: t('Risk-aware selector', '风险感知选择器'), description: t('value · feasibility · uncertainty', '价值 · 可行性 · 不确定性') }),
+    moduleNode(palette, { id: 'wm-decision-metrics', kind: 'scientific-metric-panel', role: 'annotation', x: 1580, y: 132, width: 124, height: 128, label: t('Decision profile', '决策规格'), description: t('H=12 · N=3', 'H=12 · N=3'), detail: 'standard' }),
+    moduleNode(palette, { id: 'wm-action', kind: 'scientific-action-chunk', role: 'policy', x: 1378, y: 326, width: 326, height: 100, label: t('Selected action chunk', '已选动作块'), description: t('receding-horizon execution', '滚动时域执行') }),
+    moduleNode(palette, { id: 'wm-robot', kind: 'scientific-scene-frame', role: 'environment', x: 1402, y: 490, width: 278, height: 174, label: t('Execute in environment', '在环境中执行'), description: t('observe after each action', '每个动作后重新观察') }),
+    moduleNode(palette, { id: 'wm-trajectory', kind: 'scientific-trajectory', role: 'action', x: 1378, y: 690, width: 172, height: 96, label: t('Measured path', '实测轨迹') }),
+    moduleNode(palette, { id: 'wm-control-metrics', kind: 'scientific-equation', role: 'annotation', x: 1570, y: 690, width: 134, height: 96, label: t('Control check', '控制检查'), description: 'e_track(t)', detail: 'detailed' }),
   ];
   const edges = [
     moduleEdge(palette, 'wm-observation', 'wm-voxel'),
     moduleEdge(palette, 'wm-goal', 'wm-model'),
     moduleEdge(palette, 'wm-state-token', 'wm-model'),
-    moduleEdge(palette, 'wm-voxel', 'wm-model'),
-    moduleEdge(palette, 'wm-coordinate', 'wm-voxel', { lineStyle: 'dotted', arrowEnd: 'open' }),
+    moduleEdge(palette, 'wm-voxel', 'wm-feature-map'),
+    moduleEdge(palette, 'wm-feature-map', 'wm-model'),
+    moduleEdge(palette, 'wm-coordinate', 'wm-feature-map', { lineStyle: 'dotted', arrowEnd: 'open' }),
     moduleEdge(palette, 'wm-model', 'wm-rollout-a'),
     moduleEdge(palette, 'wm-model', 'wm-rollout-b'),
     moduleEdge(palette, 'wm-model', 'wm-rollout-c', { lineStyle: 'dashed' }),
-    moduleEdge(palette, 'wm-rollout-a', 'wm-score-a'),
-    moduleEdge(palette, 'wm-rollout-b', 'wm-score-b'),
-    moduleEdge(palette, 'wm-rollout-c', 'wm-score-c', { lineStyle: 'dashed' }),
-    moduleEdge(palette, 'wm-score-a', 'wm-action', { width: 2.4, label: t('select', '选择') }),
-    moduleEdge(palette, 'wm-score-b', 'wm-action', { lineStyle: 'dotted', arrowEnd: 'open' }),
+    moduleEdge(palette, 'wm-rollout-a', 'wm-trajectory-a'),
+    moduleEdge(palette, 'wm-trajectory-a', 'wm-score-a'),
+    moduleEdge(palette, 'wm-rollout-b', 'wm-trajectory-b'),
+    moduleEdge(palette, 'wm-trajectory-b', 'wm-score-b'),
+    moduleEdge(palette, 'wm-rollout-c', 'wm-trajectory-c', { lineStyle: 'dashed' }),
+    moduleEdge(palette, 'wm-trajectory-c', 'wm-score-c', { lineStyle: 'dashed' }),
+    moduleEdge(palette, 'wm-score-a', 'wm-decision', { width: 2.4, label: t('selected', '已选择') }),
+    moduleEdge(palette, 'wm-score-b', 'wm-decision', { lineStyle: 'dotted', arrowEnd: 'open' }),
+    moduleEdge(palette, 'wm-score-c', 'wm-decision', { lineStyle: 'dashed', arrowEnd: 'open' }),
+    moduleEdge(palette, 'wm-decision', 'wm-action', { width: 2.4 }),
     moduleEdge(palette, 'wm-action', 'wm-trajectory'),
-    moduleEdge(palette, 'wm-trajectory', 'wm-robot'),
+    moduleEdge(palette, 'wm-action', 'wm-robot'),
+    moduleEdge(palette, 'wm-robot', 'wm-trajectory'),
     moduleEdge(palette, 'wm-robot', 'wm-observation', { routing: 'bezier', feedback: true, label: t('next observation', '新观察') }),
   ];
-  return { nodes, edges, width: 1460, height: 740 };
+  return { nodes, edges, width: 1760, height: 860 };
 }
 
 function buildSimToReal(options: ScientificSchematicOptions, provenance: ScientificProvenance): Blueprint {
@@ -974,6 +1185,1083 @@ function buildMultiEmbodimentPolicy(options: ScientificSchematicOptions, provena
   return { nodes, edges, width: 1500, height: 740 };
 }
 
+interface FlagshipStage {
+  id: string;
+  label: string;
+}
+
+function washWithWhite(color: string, whiteAmount = 0.72): string {
+  const match = color.match(/^#([0-9a-f]{6})$/i);
+  if (!match) return color;
+  const value = Number.parseInt(match[1], 16);
+  const channels = [value >> 16, (value >> 8) & 0xff, value & 0xff];
+  return `#${channels.map((channel) => Math.round(channel + (255 - channel) * whiteAmount)
+    .toString(16).padStart(2, '0')).join('')}`;
+}
+
+function flagshipFrame(
+  palette: SchematicPalette,
+  options: ScientificSchematicOptions,
+  provenance: ScientificProvenance,
+  width: number,
+  height: number,
+  stages: FlagshipStage[],
+  layout: 'single-column' | 'presentation',
+): FlowNode[] {
+  const rootFontSize = layout === 'presentation' ? 48 : PUBLICATION_TYPOGRAPHY.figureTitle;
+  const stageFontSize = layout === 'presentation' ? 38 : PUBLICATION_TYPOGRAPHY.stageTitle;
+  const nodes = [moduleNode(palette, {
+    id: `${options.templateId}-responsive-root`,
+    kind: 'group',
+    role: 'frame',
+    x: 0,
+    y: 0,
+    width,
+    height,
+    label: options.title,
+    fontSize: rootFontSize,
+    scientificRole: 'schematic-root',
+    provenance,
+    fill: '#FFFFFF',
+    stroke: 'none',
+    borderWidth: 0,
+    radius: 0,
+  })];
+  const stageFills = [
+    washWithWhite(palette.modality.fill),
+    washWithWhite(palette.backbone.fill),
+    washWithWhite(palette.policy.fill),
+    washWithWhite(palette.environment.fill),
+  ];
+  if (layout === 'single-column') {
+    const stageY = [70, 212, 354, 496];
+    stages.forEach((stage, index) => nodes.push(moduleNode(palette, {
+      id: stage.id,
+      kind: 'group',
+      role: 'phase',
+      x: 14,
+      y: stageY[index],
+      width: 732,
+      height: 130,
+      label: stage.label,
+      fontSize: stageFontSize,
+      fill: stageFills[index],
+      stroke: 'none',
+      borderWidth: 0,
+      radius: 4,
+    })));
+  } else {
+    const stageX = [24, 426, 828, 1230];
+    stages.forEach((stage, index) => nodes.push(moduleNode(palette, {
+      id: stage.id,
+      kind: 'group',
+      role: 'phase',
+      x: stageX[index],
+      y: 92,
+      width: 380,
+      height: 748,
+      label: stage.label,
+      fontSize: stageFontSize,
+      fill: stageFills[index],
+      stroke: 'none',
+      borderWidth: 0,
+      radius: 4,
+    })));
+  }
+  return nodes;
+}
+
+function responsiveEdge(
+  palette: SchematicPalette,
+  source: string,
+  target: string,
+  options: EdgeOptions = {},
+  labelFontSize?: number,
+): FlowEdge {
+  const edge = moduleEdge(palette, source, target, options);
+  edge.data = { ...edge.data!, labelFontSize };
+  return edge;
+}
+
+function buildSingleColumnFlagship(
+  options: ScientificSchematicOptions,
+  provenance: ScientificProvenance,
+): Blueprint | undefined {
+  const palette = PALETTES[options.style];
+  const t = (en: string, zh: string) => text(options.language, en, zh);
+  const width = 760;
+  const height = 640;
+  const fontSize = PUBLICATION_TYPOGRAPHY.moduleLabel;
+
+  if (options.templateId === 'vla-policy') {
+    const nodes = flagshipFrame(palette, options, provenance, width, height, [
+      { id: 'vla-sc-a', label: t('A  Observe', 'A  观察') },
+      { id: 'vla-sc-b', label: t('B  Reason', 'B  推理') },
+      { id: 'vla-sc-c', label: t('C  Act', 'C  动作') },
+      { id: 'vla-sc-d', label: t('D  Execute', 'D  执行') },
+    ], 'single-column');
+    nodes.push(
+      moduleNode(palette, { id: 'vla-scene', kind: 'scientific-scene-frame', role: 'modality', x: 100, y: 128, width: 180, height: 64, label: t('2× RGB-D', '双路 RGB-D'), fontSize, variant: 'multiview' }),
+      moduleNode(palette, { id: 'vla-language', kind: 'scientific-prompt-card', role: 'modality', x: 300, y: 128, width: 180, height: 64, label: t('Task', '任务'), fontSize }),
+      moduleNode(palette, { id: 'vla-state', kind: 'scientific-token-strip', role: 'modality', x: 500, y: 128, width: 220, height: 64, label: 'q · q̇ · g', fontSize, variant: 'state-vector' }),
+      moduleNode(palette, { id: 'vla-fusion', kind: 'scientific-token-strip', role: 'token', x: 110, y: 270, width: 150, height: 64, label: t('Fusion', '融合'), fontSize }),
+      moduleNode(palette, { id: 'vla-backbone', kind: 'scientific-transformer', role: 'backbone', x: 280, y: 270, width: 205, height: 64, label: t('VLM', 'VLM'), fontSize, variant: 'vlm' }),
+      moduleNode(palette, { id: 'vla-action-expert', kind: 'scientific-layer-stack', role: 'policy', x: 505, y: 270, width: 215, height: 64, label: t('Flow head', '流匹配头'), fontSize, variant: 'diffusion-action' }),
+      moduleNode(palette, { id: 'vla-decision', kind: 'scientific-decision-gate', role: 'policy', x: 50, y: 412, width: 180, height: 64, label: t('Risk rank', '风险排序'), fontSize, variant: 'risk-ranking' }),
+      moduleNode(palette, { id: 'vla-action-chunk', kind: 'scientific-action-chunk', role: 'action', x: 250, y: 412, width: 250, height: 64, label: t('H=16 actions', 'H=16 动作'), fontSize, variant: 'action-horizon' }),
+      moduleNode(palette, { id: 'vla-controller', role: 'action', x: 520, y: 412, width: 200, height: 64, label: t('Controller', '控制器'), fontSize }),
+      moduleNode(palette, { id: 'vla-robot', kind: 'scientific-scene-frame', role: 'environment', x: 110, y: 554, width: 240, height: 64, label: t('Execute', '执行'), fontSize, variant: 'execution' }),
+      moduleNode(palette, { id: 'vla-feedback', kind: 'scientific-legend', role: 'annotation', x: 370, y: 554, width: 350, height: 64, label: t('Visual encoding', '视觉编码'), fontSize: PUBLICATION_TYPOGRAPHY.annotation }),
+    );
+    const removeNode = (id: string) => {
+      const index = nodes.findIndex((candidate) => candidate.id === id);
+      if (index >= 0) nodes.splice(index, 1);
+    };
+    removeNode('vla-scene');
+    removeNode('vla-robot');
+    removeNode('vla-feedback');
+    const languageNode = nodes.find((candidate) => candidate.id === 'vla-language');
+    const stateNode = nodes.find((candidate) => candidate.id === 'vla-state');
+    if (languageNode) {
+      languageNode.position.x = 444;
+      languageNode.style = { ...languageNode.style, width: 126 };
+    }
+    if (stateNode) {
+      stateNode.position.x = 584;
+      stateNode.style = { ...stateNode.style, width: 142 };
+    }
+    nodes.push(
+      moduleNode(palette, { id: 'vla-camera-front', kind: 'scientific-camera', role: 'modality', x: 30, y: 128, width: 82, height: 64, label: t('F', '前'), fontSize }),
+      moduleNode(palette, { id: 'vla-camera-wrist', kind: 'scientific-camera', role: 'modality', x: 122, y: 128, width: 82, height: 64, label: t('W', '腕'), fontSize }),
+      moduleNode(palette, { id: 'vla-object-before', kind: 'scientific-task-object', role: 'loss', x: 216, y: 128, width: 92, height: 64, label: t('Cube', '方块'), fontSize, variant: 'object-cube' }),
+      moduleNode(palette, { id: 'vla-goal-before', kind: 'scientific-goal-region', role: 'environment', x: 320, y: 128, width: 112, height: 64, label: t('Goal', '目标'), fontSize, variant: 'goal-bin' }),
+      moduleNode(palette, { id: 'vla-input-merge', kind: 'on-page-connector', role: 'token', x: 177, y: 194, width: 16, height: 16, label: '', fontSize }),
+      moduleNode(palette, { id: 'vla-robot', kind: 'scientific-robot-arm', role: 'environment', x: 620, y: 554, width: 104, height: 64, label: t('Arm', '机械臂'), fontSize }),
+      moduleNode(palette, { id: 'vla-trajectory', kind: 'scientific-trajectory', role: 'action', x: 466, y: 554, width: 142, height: 64, label: '6-DoF', fontSize }),
+      moduleNode(palette, { id: 'vla-contact', kind: 'scientific-contact-point', role: 'loss', x: 366, y: 554, width: 88, height: 64, label: t('Grip', '抓取'), fontSize, variant: 'force-contact' }),
+      moduleNode(palette, { id: 'vla-object-after', kind: 'scientific-task-object', role: 'loss', x: 266, y: 554, width: 88, height: 64, label: t('Lift', '抬升'), fontSize, variant: 'object-cube' }),
+      moduleNode(palette, { id: 'vla-goal-after', kind: 'scientific-goal-region', role: 'environment', x: 140, y: 554, width: 114, height: 64, label: t('Place', '放置'), fontSize, variant: 'goal-bin' }),
+      moduleNode(palette, { id: 'vla-reobserve', kind: 'scientific-camera', role: 'modality', x: 28, y: 554, width: 100, height: 64, label: t('Obs.', '观测'), fontSize }),
+    );
+    const edges = [
+      responsiveEdge(palette, 'vla-camera-front', 'vla-input-merge', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', arrowEnd: 'none' }),
+      responsiveEdge(palette, 'vla-camera-wrist', 'vla-input-merge', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', arrowEnd: 'none' }),
+      responsiveEdge(palette, 'vla-language', 'vla-input-merge', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', arrowEnd: 'none' }),
+      responsiveEdge(palette, 'vla-state', 'vla-input-merge', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', arrowEnd: 'none' }),
+      responsiveEdge(palette, 'vla-input-merge', 'vla-fusion', { sourceHandle: 'bottom', targetHandle: 'top' }),
+      responsiveEdge(palette, 'vla-fusion', 'vla-backbone', { width: PUBLICATION_STROKES.primary, sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'vla-backbone', 'vla-action-expert', { width: PUBLICATION_STROKES.primary, sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'vla-action-expert', 'vla-decision', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }),
+      responsiveEdge(palette, 'vla-decision', 'vla-action-chunk', { sourceHandle: 'right', targetHandle: 'left', semantic: 'control' }),
+      responsiveEdge(palette, 'vla-action-chunk', 'vla-controller', { sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }),
+      responsiveEdge(palette, 'vla-controller', 'vla-robot', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }),
+      responsiveEdge(palette, 'vla-robot', 'vla-trajectory', { sourceHandle: 'left', targetHandle: 'right', semantic: 'temporal' }),
+      responsiveEdge(palette, 'vla-trajectory', 'vla-contact', { sourceHandle: 'left', targetHandle: 'right', semantic: 'control' }),
+      responsiveEdge(palette, 'vla-contact', 'vla-object-after', { sourceHandle: 'left', targetHandle: 'right', semantic: 'control' }),
+      responsiveEdge(palette, 'vla-object-after', 'vla-goal-after', { sourceHandle: 'left', targetHandle: 'right', semantic: 'temporal' }),
+      responsiveEdge(palette, 'vla-goal-after', 'vla-reobserve', { sourceHandle: 'left', targetHandle: 'right' }),
+      responsiveEdge(palette, 'vla-reobserve', 'vla-camera-front', { feedback: true, routeSide: 'bottom-left', routeOffset: 18, sourceHandle: 'bottom', targetHandle: 'left' }),
+    ];
+    return { nodes, edges, width, height };
+  }
+
+  if (options.templateId === 'world-model-rollout') {
+    const nodes = flagshipFrame(palette, options, provenance, width, height, [
+      { id: 'wm-sc-a', label: t('A  Input', 'A  输入') },
+      { id: 'wm-sc-b', label: t('B  Model', 'B  建模') },
+      { id: 'wm-sc-c', label: t('C  Futures', 'C  未来') },
+      { id: 'wm-sc-d', label: t('D  Act', 'D  决策') },
+    ], 'single-column');
+    nodes.push(
+      moduleNode(palette, { id: 'wm-observation', kind: 'scientific-scene-frame', role: 'modality', x: 32, y: 128, width: 210, height: 64, label: t('Views at t', 't 时刻视图'), fontSize, variant: 'multiview' }),
+      moduleNode(palette, { id: 'wm-goal', kind: 'scientific-prompt-card', role: 'modality', x: 259, y: 128, width: 210, height: 64, label: t('Goal', '任务目标'), fontSize }),
+      moduleNode(palette, { id: 'wm-state-token', kind: 'scientific-token-strip', role: 'token', x: 486, y: 128, width: 240, height: 64, label: t('State history', '状态历史'), fontSize, variant: 'state-vector' }),
+      moduleNode(palette, { id: 'wm-voxel', kind: 'scientific-voxel-grid', role: 'encoder', x: 96, y: 270, width: 230, height: 64, label: t('3D state', '3D 状态'), fontSize }),
+      moduleNode(palette, { id: 'wm-model', kind: 'scientific-transformer', role: 'backbone', x: 380, y: 270, width: 310, height: 64, label: options.backbone || t('World model', '世界模型'), fontSize, variant: 'world-model' }),
+      moduleNode(palette, { id: 'wm-rollout-a', kind: 'scientific-scene-frame', role: 'environment', x: 110, y: 412, width: 180, height: 64, label: t('A · success', 'A · 成功'), fontSize, variant: 'success' }),
+      moduleNode(palette, { id: 'wm-rollout-b', kind: 'scientific-scene-frame', role: 'loss', x: 310, y: 412, width: 180, height: 64, label: t('B · contact', 'B · 碰撞'), fontSize, variant: 'collision' }),
+      moduleNode(palette, { id: 'wm-rollout-c', kind: 'scientific-scene-frame', role: 'annotation', x: 510, y: 412, width: 210, height: 64, label: t('C · uncertain', 'C · 不确定'), fontSize, variant: 'uncertain' }),
+      moduleNode(palette, { id: 'wm-decision', kind: 'scientific-decision-gate', role: 'policy', x: 110, y: 554, width: 220, height: 64, label: t('Rank S(τ)', '排序 S(τ)'), fontSize, variant: 'risk-ranking' }),
+      moduleNode(palette, { id: 'wm-action', kind: 'scientific-action-chunk', role: 'action', x: 350, y: 554, width: 170, height: 64, label: t('Action H', '动作 H'), fontSize, variant: 'action-horizon' }),
+      moduleNode(palette, { id: 'wm-robot', kind: 'scientific-scene-frame', role: 'environment', x: 540, y: 554, width: 180, height: 64, label: t('Reobserve', '再观察'), fontSize, variant: 'execution' }),
+    );
+    const rolloutLayout = [
+      { id: 'wm-rollout-a', x: 28, width: 164, scoreLabel: 'A | S_A↑' },
+      { id: 'wm-rollout-b', x: 208, width: 164, scoreLabel: 'B | reject' },
+      { id: 'wm-rollout-c', x: 388, width: 164, scoreLabel: 'C | U_C↑' },
+    ];
+    rolloutLayout.forEach(({ id, x, width: rolloutWidth, scoreLabel }) => {
+      const rollout = nodes.find((candidate) => candidate.id === id);
+      if (!rollout) return;
+      rollout.position.x = x;
+      rollout.style = { ...rollout.style, width: rolloutWidth };
+      rollout.data = { ...rollout.data, label: scoreLabel, description: undefined };
+    });
+    const replaceNode = (id: string, replacement: FlowNode) => {
+      const index = nodes.findIndex((candidate) => candidate.id === id);
+      if (index >= 0) nodes.splice(index, 1, replacement);
+      else nodes.push(replacement);
+    };
+    replaceNode('wm-decision', moduleNode(palette, { id: 'wm-decision', kind: 'scientific-decision-gate', role: 'policy', x: 592, y: 554, width: 134, height: 64, label: t('Select A', '选择 A'), fontSize, variant: 'risk-ranking' }));
+    replaceNode('wm-action', moduleNode(palette, { id: 'wm-action', kind: 'scientific-action-chunk', role: 'action', x: 456, y: 554, width: 120, height: 64, label: t('Act H', '动作 H'), fontSize, variant: 'action-horizon' }));
+    replaceNode('wm-robot', moduleNode(palette, { id: 'wm-robot', kind: 'scientific-robot-arm', role: 'environment', x: 340, y: 554, width: 100, height: 64, label: t('Arm', '机械臂'), fontSize }));
+    nodes.push(
+      moduleNode(palette, { id: 'wm-rollout-split', kind: 'on-page-connector', role: 'backbone', x: 568, y: 394, width: 16, height: 16, label: '', fontSize }),
+      moduleNode(palette, { id: 'wm-score-merge', kind: 'on-page-connector', role: 'policy', x: 642, y: 480, width: 30, height: 30, label: '', fontSize }),
+      moduleNode(palette, { id: 'wm-reobserve', kind: 'scientific-camera', role: 'modality', x: 210, y: 554, width: 114, height: 64, label: 't+1', fontSize }),
+      moduleNode(palette, { id: 'wm-error', kind: 'scientific-metric-panel', role: 'loss', x: 28, y: 554, width: 166, height: 64, label: t('Pred. error', '预测误差'), fontSize, variant: 'prediction-error' }),
+    );
+    const edges = [
+      responsiveEdge(palette, 'wm-observation', 'wm-voxel', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top' }),
+      responsiveEdge(palette, 'wm-goal', 'wm-model', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top' }),
+      responsiveEdge(palette, 'wm-state-token', 'wm-model', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top' }),
+      responsiveEdge(palette, 'wm-voxel', 'wm-model', { sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'wm-model', 'wm-rollout-split', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'broadcast' }),
+      responsiveEdge(palette, 'wm-rollout-split', 'wm-rollout-a', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'broadcast' }),
+      responsiveEdge(palette, 'wm-rollout-split', 'wm-rollout-b', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'broadcast' }),
+      responsiveEdge(palette, 'wm-rollout-split', 'wm-rollout-c', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', lineStyle: 'dashed', semantic: 'broadcast' }),
+      responsiveEdge(palette, 'wm-rollout-a', 'wm-score-merge', { routing: 'straight', width: PUBLICATION_STROKES.primary, sourceHandle: 'bottom', targetHandle: 'left', semantic: 'control' }),
+      responsiveEdge(palette, 'wm-rollout-b', 'wm-score-merge', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', lineStyle: 'dotted', arrowEnd: 'open', semantic: 'optional' }),
+      responsiveEdge(palette, 'wm-rollout-c', 'wm-score-merge', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'left', lineStyle: 'dashed', arrowEnd: 'open', semantic: 'optional' }),
+      responsiveEdge(palette, 'wm-score-merge', 'wm-decision', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }),
+      responsiveEdge(palette, 'wm-decision', 'wm-action', { sourceHandle: 'left', targetHandle: 'right', semantic: 'control' }),
+      responsiveEdge(palette, 'wm-action', 'wm-robot', { sourceHandle: 'left', targetHandle: 'right', semantic: 'temporal' }),
+      responsiveEdge(palette, 'wm-robot', 'wm-reobserve', { sourceHandle: 'left', targetHandle: 'right', semantic: 'temporal' }),
+      responsiveEdge(palette, 'wm-reobserve', 'wm-error', { sourceHandle: 'left', targetHandle: 'right', semantic: 'data' }),
+      responsiveEdge(palette, 'wm-error', 'wm-observation', { routing: 'bezier', feedback: true, routeSide: 'bottom-left', routeOffset: 18 }),
+    ];
+    return { nodes, edges, width, height };
+  }
+
+  if (options.templateId === 'llm-training-pipeline') {
+    const nodes = flagshipFrame(palette, options, provenance, width, height, [
+      { id: 'lt-sc-a', label: t('A  Data', 'A  数据') },
+      { id: 'lt-sc-b', label: t('B  Pretrain', 'B  预训练') },
+      { id: 'lt-sc-c', label: t('C  Align', 'C  对齐') },
+      { id: 'lt-sc-d', label: t('D  Evaluate', 'D  评测') },
+    ], 'single-column');
+    const alignmentPhase = nodes.find((node) => node.id === 'lt-sc-c');
+    const evaluationPhase = nodes.find((node) => node.id === 'lt-sc-d');
+    if (alignmentPhase) alignmentPhase.style = { ...alignmentPhase.style, height: 154 };
+    if (evaluationPhase) {
+      evaluationPhase.position.y = 512;
+      evaluationPhase.style = { ...evaluationPhase.style, height: 114 };
+      evaluationPhase.data = { ...evaluationPhase.data, label: t('D  Eval.', 'D  评测') };
+    }
+    nodes.push(
+      moduleNode(palette, { id: 'lt-raw-data', kind: 'scientific-data-funnel', role: 'dataset', x: 50, y: 128, width: 280, height: 64, label: t('Data sources', '数据来源'), fontSize }),
+      moduleNode(palette, { id: 'lt-curation', role: 'bridge', x: 430, y: 128, width: 280, height: 64, label: t('Curate', '策展'), fontSize }),
+      moduleNode(palette, { id: 'lt-pretrain-tokens', kind: 'scientific-token-strip', role: 'token', x: 90, y: 270, width: 260, height: 64, label: t('Token batches', 'Token 批次'), fontSize }),
+      moduleNode(palette, { id: 'lt-base-model', kind: 'scientific-transformer', role: 'backbone', x: 400, y: 270, width: 300, height: 64, label: options.backbone || t('Base model θ0', '基础模型 θ0'), fontSize, variant: 'base-model' }),
+      moduleNode(palette, { id: 'lt-sft-model', kind: 'scientific-trainable', role: 'policy', x: 250, y: 364, width: 260, height: 44, label: 'SFT πref', fontSize }),
+      moduleNode(palette, { id: 'lt-dpo-objective', kind: 'scientific-loss-target', role: 'loss', x: 70, y: 412, width: 290, height: 64, label: 'DPO', description: 'prefs · πref · β', fontSize, variant: 'preference-objective' }),
+      moduleNode(palette, { id: 'lt-rlhf-objective', kind: 'scientific-loss-target', role: 'policy', x: 400, y: 412, width: 290, height: 64, label: 'RM → PPO', description: 'rφ · KL(π ‖ πref)', fontSize, variant: 'preference-objective' }),
+      moduleNode(palette, { id: 'lt-deploy-model', kind: 'scientific-transformer', role: 'backbone', x: 120, y: 554, width: 210, height: 64, label: t('Aligned θ*', '对齐 θ*'), fontSize, variant: 'checkpoint' }),
+      moduleNode(palette, { id: 'lt-capability-plot', role: 'action', x: 350, y: 554, width: 205, height: 64, label: t('Eval · seeds · CI', '评测 · 种子 · CI'), fontSize }),
+      moduleNode(palette, { id: 'lt-response', kind: 'scientific-token-strip', role: 'action', x: 575, y: 554, width: 145, height: 64, label: t('Monitor', '监测'), fontSize, variant: 'telemetry' }),
+    );
+    const replaceNodes = new Set([
+      'lt-sft-model',
+      'lt-dpo-objective',
+      'lt-rlhf-objective',
+      'lt-deploy-model',
+      'lt-capability-plot',
+      'lt-response',
+    ]);
+    for (let index = nodes.length - 1; index >= 0; index -= 1) {
+      if (replaceNodes.has(nodes[index].id)) nodes.splice(index, 1);
+    }
+    nodes.push(
+      moduleNode(palette, { id: 'lt-sft-model', kind: 'scientific-trainable', role: 'policy', x: 160, y: 360, width: 140, height: 72, label: 'SFT ref.', fontSize, variant: 'aligned-model' }),
+      moduleNode(palette, { id: 'lt-alignment-split', kind: 'on-page-connector', role: 'policy', x: 316, y: 382, width: 28, height: 28, label: '', fontSize }),
+      moduleNode(palette, { id: 'lt-dpo-objective', kind: 'scientific-loss-target', role: 'loss', x: 362, y: 368, width: 100, height: 64, label: 'DPO', fontSize, variant: 'preference-objective' }),
+      moduleNode(palette, { id: 'lt-dpo-checkpoint', role: 'backbone', x: 482, y: 368, width: 138, height: 64, label: 'DPO θ_D', fontSize }),
+      moduleNode(palette, { id: 'lt-rlhf-objective', kind: 'scientific-loss-target', role: 'policy', x: 362, y: 444, width: 145, height: 64, label: 'RM/PPO', fontSize, variant: 'preference-objective' }),
+      moduleNode(palette, { id: 'lt-rlhf-checkpoint', role: 'backbone', x: 522, y: 444, width: 110, height: 64, label: 'RL θ_RL', fontSize }),
+      moduleNode(palette, { id: 'lt-alignment-merge', kind: 'on-page-connector', role: 'backbone', x: 650, y: 405, width: 54, height: 64, label: 'M', fontSize }),
+      moduleNode(palette, { id: 'lt-deploy-model', kind: 'scientific-transformer', role: 'backbone', x: 150, y: 552, width: 70, height: 66, label: 'θ*', fontSize, variant: 'aligned-model' }),
+      moduleNode(palette, { id: 'lt-capability-plot', kind: 'scientific-metric-panel', role: 'action', x: 232, y: 552, width: 135, height: 66, label: t('C+S', '能力+安全'), fontSize, variant: 'capability-safety' }),
+      moduleNode(palette, { id: 'lt-failure-slice', kind: 'scientific-ablation-table', role: 'loss', x: 379, y: 552, width: 110, height: 66, label: t('Worst', '最差'), fontSize }),
+      moduleNode(palette, { id: 'lt-release-gate', kind: 'scientific-release-gate', role: 'policy', x: 501, y: 552, width: 100, height: 66, label: t('Gate', '发布'), fontSize, variant: 'release-gate' }),
+      moduleNode(palette, { id: 'lt-response', kind: 'scientific-token-strip', role: 'action', x: 613, y: 552, width: 90, height: 66, label: t('Drift', '漂移'), fontSize, variant: 'telemetry' }),
+    );
+    const edges = [
+      responsiveEdge(palette, 'lt-raw-data', 'lt-curation', { sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'lt-curation', 'lt-pretrain-tokens', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'temporal' }),
+      responsiveEdge(palette, 'lt-pretrain-tokens', 'lt-base-model', { sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'lt-base-model', 'lt-sft-model', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'temporal' }),
+      responsiveEdge(palette, 'lt-sft-model', 'lt-alignment-split', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }),
+      responsiveEdge(palette, 'lt-alignment-split', 'lt-dpo-objective', { sourceHandle: 'right', targetHandle: 'left', semantic: 'gradient' }),
+      responsiveEdge(palette, 'lt-alignment-split', 'lt-rlhf-objective', { sourceHandle: 'right', targetHandle: 'left', semantic: 'gradient' }),
+      responsiveEdge(palette, 'lt-dpo-objective', 'lt-dpo-checkpoint', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'optional' }),
+      responsiveEdge(palette, 'lt-rlhf-objective', 'lt-rlhf-checkpoint', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'optional' }),
+      responsiveEdge(palette, 'lt-dpo-checkpoint', 'lt-alignment-merge', { sourceHandle: 'right', targetHandle: 'top', semantic: 'optional' }),
+      responsiveEdge(palette, 'lt-rlhf-checkpoint', 'lt-alignment-merge', { sourceHandle: 'right', targetHandle: 'bottom', semantic: 'optional' }),
+      responsiveEdge(palette, 'lt-alignment-merge', 'lt-deploy-model', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'temporal' }),
+      responsiveEdge(palette, 'lt-deploy-model', 'lt-capability-plot', { sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'lt-capability-plot', 'lt-failure-slice', { sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'lt-failure-slice', 'lt-release-gate', { sourceHandle: 'right', targetHandle: 'left', semantic: 'control' }),
+      responsiveEdge(palette, 'lt-release-gate', 'lt-response', { sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }),
+      responsiveEdge(palette, 'lt-response', 'lt-curation', {
+        routing: 'bezier',
+        feedback: true,
+        routeOffset: 18,
+        sourceHandle: 'bottom',
+        targetHandle: 'right',
+        routeSide: 'right',
+      }),
+    ];
+    return { nodes, edges, width, height };
+  }
+  return undefined;
+}
+
+function buildPresentationFlagship(
+  options: ScientificSchematicOptions,
+  provenance: ScientificProvenance,
+  compactStageLabels = true,
+): Blueprint | undefined {
+  const palette = PALETTES[options.style];
+  const t = (en: string, zh: string) => text(options.language, en, zh);
+  const width = 1680;
+  const height = 880;
+  const fontSize = 40;
+  const descriptionFontSize = 34;
+  const stagesByTemplate: Partial<Record<ScientificSchematicTemplateId, FlagshipStage[]>> = {
+    'vla-policy': [
+      { id: 'vla-pr-a', label: t('A  Observe', 'A  观察') },
+      { id: 'vla-pr-b', label: compactStageLabels ? t('B  Reason', 'B  推理') : t('B  Multimodal reasoning', 'B  多模态推理') },
+      { id: 'vla-pr-c', label: compactStageLabels ? t('C  Act', 'C  动作') : t('C  Action policy', 'C  动作策略') },
+      { id: 'vla-pr-d', label: compactStageLabels ? t('D  Control', 'D  控制') : t('D  Closed-loop control', 'D  闭环控制') },
+    ],
+    'world-model-rollout': [
+      { id: 'wm-pr-a', label: compactStageLabels ? t('A  Observe', 'A  观察') : t('A  Current evidence', 'A  当前证据') },
+      { id: 'wm-pr-b', label: compactStageLabels ? t('B  Predict', 'B  预测') : t('B  Predictive state', 'B  预测状态') },
+      { id: 'wm-pr-c', label: compactStageLabels ? t('C  Imagine', 'C  展开') : t('C  Counterfactual futures', 'C  反事实未来') },
+      { id: 'wm-pr-d', label: compactStageLabels ? t('D  Control', 'D  控制') : t('D  Decision and control', 'D  决策控制') },
+    ],
+    'llm-training-pipeline': [
+      { id: 'lt-pr-a', label: compactStageLabels ? t('A  Curate', 'A  策展') : t('A  Curate data', 'A  数据策展') },
+      { id: 'lt-pr-b', label: t('B  Pretrain', 'B  预训练') },
+      { id: 'lt-pr-c', label: compactStageLabels ? t('C  Align', 'C  对齐') : t('C  Align behavior', 'C  行为对齐') },
+      { id: 'lt-pr-d', label: compactStageLabels ? t('D  Evaluate', 'D  评测') : t('D  Evaluate and release', 'D  评测发布') },
+    ],
+  };
+  const stages = stagesByTemplate[options.templateId];
+  if (!stages) return undefined;
+  const nodes = flagshipFrame(palette, options, provenance, width, height, stages, 'presentation');
+  const node = (input: NodeOptions) => moduleNode(palette, { ...input, fontSize: input.fontSize ?? fontSize });
+  let edges: FlowEdge[] = [];
+
+  if (options.templateId === 'vla-policy') {
+    nodes.push(
+      node({ id: 'vla-scene', kind: 'scientific-scene-frame', role: 'modality', x: 60, y: 166, width: 324, height: 180, label: t('2-view RGB-D', '双路 RGB-D'), description: t('depth · mask', '深度 · 掩码'), variant: 'multiview' }),
+      node({ id: 'vla-language', kind: 'scientific-prompt-card', role: 'modality', x: 60, y: 398, width: 324, height: 132, label: t('Instruction', '任务指令') }),
+      node({ id: 'vla-state', kind: 'scientific-token-strip', role: 'modality', x: 60, y: 584, width: 324, height: 128, label: t('State vector', '状态向量'), description: 'q · q̇ · g', variant: 'state-vector' }),
+      node({ id: 'vla-input-merge', kind: 'on-page-connector', role: 'token', x: 404, y: 393, width: 22, height: 22, label: '', fontSize: 22 }),
+      node({ id: 'vla-fusion', kind: 'scientific-token-strip', role: 'token', x: 446, y: 168, width: 340, height: 132, label: t('Aligned tokens', '对齐 Token') }),
+      node({ id: 'vla-backbone', kind: 'scientific-transformer', role: 'backbone', x: 462, y: 356, width: 308, height: 230, label: options.backbone || t('VLM backbone', 'VLM 主干'), description: t('vision · text · state fusion', '视觉 · 文本 · 状态融合'), variant: 'vlm' }),
+      node({ id: 'vla-attention', kind: 'scientific-attention-map', role: 'annotation', x: 510, y: 650, width: 212, height: 146, label: t('Attention', '注意力'), fontSize: descriptionFontSize }),
+      node({ id: 'vla-action-expert', kind: 'scientific-layer-stack', role: 'policy', x: 848, y: 174, width: 340, height: 184, label: t('Action expert', '动作专家'), description: t('flow matching · diffusion', '流匹配 · 扩散去噪'), variant: 'diffusion-action' }),
+      node({ id: 'vla-decision', kind: 'scientific-decision-gate', role: 'policy', x: 848, y: 420, width: 340, height: 154, label: t('Risk ranking', '风险排序'), description: t('risk · limits', '碰撞 / 限位'), variant: 'risk-ranking' }),
+      node({ id: 'vla-action-chunk', kind: 'scientific-action-chunk', role: 'action', x: 864, y: 636, width: 308, height: 148, label: t('H=16 actions', 'H=16 动作'), variant: 'action-horizon' }),
+      node({ id: 'vla-controller', role: 'action', x: 1266, y: 176, width: 308, height: 132, label: t('Safety + controller', '安全约束 + 控制器') }),
+      node({ id: 'vla-robot', kind: 'scientific-scene-frame', role: 'environment', x: 1266, y: 366, width: 308, height: 220, label: t('Execute + contact', '执行 + 接触'), description: t('20 Hz · horizon H=16', '20 Hz · 时域 H=16'), variant: 'execution' }),
+      node({ id: 'vla-feedback', kind: 'scientific-legend', role: 'annotation', x: 1242, y: 610, width: 300, height: 190, label: t('Encoding legend', '编码图例'), description: t('solid=data · dashed=optional', '实线=数据 · 虚线=可选'), fontSize: descriptionFontSize }),
+    );
+    edges = [
+      responsiveEdge(palette, 'vla-scene', 'vla-input-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-language', 'vla-input-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-state', 'vla-input-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-input-merge', 'vla-fusion', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-fusion', 'vla-backbone', { width: 4.6, sourceHandle: 'bottom', targetHandle: 'top' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-backbone', 'vla-attention', { sourceHandle: 'bottom', targetHandle: 'top', lineStyle: 'dotted', arrowEnd: 'open', semantic: 'optional' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-backbone', 'vla-action-expert', { width: 4.6, sourceHandle: 'right', targetHandle: 'left' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-action-expert', 'vla-decision', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-decision', 'vla-action-chunk', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-action-chunk', 'vla-controller', { sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-controller', 'vla-robot', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-robot', 'vla-scene', {
+        routing: 'bezier',
+        feedback: true,
+        routeOffset: 350,
+        sourceHandle: 'right',
+        targetHandle: 'left',
+      }, descriptionFontSize),
+    ];
+  } else if (options.templateId === 'world-model-rollout') {
+    nodes.push(
+      node({ id: 'wm-observation', kind: 'scientific-scene-frame', role: 'modality', x: 60, y: 166, width: 308, height: 190, label: t('Views at t', 't 时刻视图'), description: t('front · wrist', '前视 · 腕部'), variant: 'multiview' }),
+      node({ id: 'wm-goal', kind: 'scientific-prompt-card', role: 'modality', x: 60, y: 414, width: 308, height: 132, label: t('Goal condition', '目标条件') }),
+      node({ id: 'wm-state-token', kind: 'scientific-token-strip', role: 'token', x: 60, y: 606, width: 308, height: 130, label: t('History', '历史状态'), description: t('q / a sequence', '状态 / 动作序列'), variant: 'state-vector' }),
+      node({ id: 'wm-input-merge', kind: 'on-page-connector', role: 'bridge', x: 404, y: 518, width: 22, height: 22, label: '', fontSize: 22 }),
+      node({ id: 'wm-voxel', kind: 'scientific-voxel-grid', role: 'encoder', x: 462, y: 166, width: 308, height: 190, label: t('3D latent state', '3D 潜在状态') }),
+      node({ id: 'wm-model', kind: 'scientific-transformer', role: 'backbone', x: 462, y: 414, width: 308, height: 230, label: options.backbone || t('Latent world model', '潜在世界模型'), description: 'p(zₜ₊₁ | zₜ, aₜ)', variant: 'world-model' }),
+      node({ id: 'wm-coordinate', kind: 'scientific-equation', role: 'annotation', x: 438, y: 664, width: 336, height: 142, label: t('Prediction loss', '预测损失'), description: 'Lpred = d(ẑₜ₊₁, zₜ₊₁)', fontSize: descriptionFontSize }),
+      node({ id: 'wm-rollout-a', kind: 'scientific-scene-frame', role: 'environment', x: 840, y: 164, width: 324, height: 164, label: t('A · success', 'A · 成功'), description: 'P(success | τA)', variant: 'success' }),
+      node({ id: 'wm-rollout-b', kind: 'scientific-scene-frame', role: 'loss', x: 840, y: 380, width: 324, height: 164, label: t('B · contact', 'B · 碰撞'), description: 'R(contact | τB)', variant: 'collision' }),
+      node({ id: 'wm-rollout-c', kind: 'scientific-scene-frame', role: 'annotation', x: 840, y: 596, width: 324, height: 164, label: t('C · uncertain', 'C · 不确定'), description: 'U(τC)', variant: 'uncertain' }),
+      node({ id: 'wm-score-merge', kind: 'on-page-connector', role: 'policy', x: 1168, y: 436, width: 60, height: 60, label: 'S', fontSize: 28 }),
+      node({ id: 'wm-decision', kind: 'scientific-decision-gate', role: 'policy', x: 1266, y: 176, width: 308, height: 166, label: t('Rank S(τ)', '排序 S(τ)'), description: t('schematic scoring contract', '示意评分契约'), variant: 'risk-ranking' }),
+      node({ id: 'wm-action', kind: 'scientific-action-chunk', role: 'action', x: 1266, y: 410, width: 308, height: 142, label: t('Action H=12', '动作 H=12'), variant: 'action-horizon' }),
+      node({ id: 'wm-robot', kind: 'scientific-scene-frame', role: 'environment', x: 1266, y: 620, width: 308, height: 170, label: t('Execute at t', 't 时刻执行'), description: t('reobserve t+1', '再观察 t+1'), variant: 'execution' }),
+    );
+    edges = [
+      responsiveEdge(palette, 'wm-observation', 'wm-voxel', { sourceHandle: 'right', targetHandle: 'left' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-goal', 'wm-input-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-state-token', 'wm-input-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-input-merge', 'wm-model', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-voxel', 'wm-model', { sourceHandle: 'bottom', targetHandle: 'top' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-model', 'wm-rollout-a', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'broadcast' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-model', 'wm-rollout-b', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'broadcast' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-model', 'wm-rollout-c', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', lineStyle: 'dashed', semantic: 'broadcast' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-rollout-a', 'wm-score-merge', { routing: 'straight', width: 4.6, sourceHandle: 'right', targetHandle: 'top', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-rollout-b', 'wm-score-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', lineStyle: 'dotted', arrowEnd: 'open', semantic: 'optional' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-rollout-c', 'wm-score-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'bottom', lineStyle: 'dashed', arrowEnd: 'open', semantic: 'optional' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-score-merge', 'wm-decision', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-decision', 'wm-action', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-action', 'wm-robot', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-robot', 'wm-observation', { routing: 'bezier', feedback: true, routeOffset: 34 }, descriptionFontSize),
+    ];
+  } else {
+    nodes.push(
+      node({ id: 'lt-raw-data', kind: 'scientific-data-funnel', role: 'dataset', x: 60, y: 166, width: 308, height: 166, label: t('Web · code · domain', '网页 · 代码 · 领域数据') }),
+      node({ id: 'lt-curation', role: 'bridge', x: 60, y: 398, width: 308, height: 148, label: t('Filter + dedupe', '过滤 + 去重') }),
+      node({ id: 'lt-mixture', kind: 'scientific-dataset-stack', role: 'dataset', x: 60, y: 612, width: 308, height: 142, label: t('Versioned mixture', '版本化数据混合') }),
+      node({ id: 'lt-pretrain-tokens', kind: 'scientific-token-strip', role: 'token', x: 462, y: 166, width: 308, height: 132, label: t('Next-token batches', '下一 Token 批次') }),
+      node({ id: 'lt-base-model', kind: 'scientific-transformer', role: 'backbone', x: 462, y: 354, width: 308, height: 238, label: options.backbone || t('Base model θ₀', '基础模型 θ₀'), description: t('autoregressive pretraining', '自回归预训练'), variant: 'base-model' }),
+      node({ id: 'lt-next-token', kind: 'scientific-equation', role: 'loss', x: 476, y: 630, width: 280, height: 160, label: 'LNLL', description: '−log pθ(xₜ | x<ₜ)', fontSize: descriptionFontSize }),
+      node({ id: 'lt-sft-model', kind: 'scientific-transformer', role: 'policy', x: 864, y: 164, width: 308, height: 132, label: 'SFT πref', description: 'Lsup', variant: 'aligned-model' }),
+      node({ id: 'lt-dpo-objective', kind: 'scientific-loss-target', role: 'loss', x: 840, y: 350, width: 174, height: 190, label: 'DPO', description: 'prefs\nπref · β', fontSize: descriptionFontSize, variant: 'preference-objective' }),
+      node({ id: 'lt-rlhf-objective', kind: 'scientific-loss-target', role: 'policy', x: 1022, y: 350, width: 174, height: 190, label: 'RM → PPO', description: 'rφ · KL\nπ ‖ πref', fontSize: descriptionFontSize, variant: 'preference-objective' }),
+      node({ id: 'lt-aligned-model', kind: 'scientific-transformer', role: 'backbone', x: 864, y: 680, width: 308, height: 112, label: t('Aligned θ*', '对齐 θ*'), variant: 'aligned-model' }),
+      node({ id: 'lt-deploy-model', kind: 'scientific-transformer', role: 'backbone', x: 1266, y: 168, width: 308, height: 178, label: t('Release θ*', '发布 θ*'), description: t('versioned', '版本化'), variant: 'checkpoint' }),
+      node({ id: 'lt-capability-plot', kind: 'scientific-equation', role: 'action', x: 1266, y: 390, width: 308, height: 190, label: t('Evaluation contract', '评测协议'), description: t('tasks · baselines · seeds · CI', '任务 · 基线 · 随机种子 · 置信区间') }),
+      node({ id: 'lt-response', kind: 'scientific-token-strip', role: 'action', x: 1266, y: 612, width: 308, height: 148, label: t('Monitor', '监测'), description: t('drift · safety', '漂移 · 安全'), variant: 'telemetry' }),
+    );
+    edges = [
+      responsiveEdge(palette, 'lt-raw-data', 'lt-curation', { sourceHandle: 'bottom', targetHandle: 'top' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-curation', 'lt-mixture', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-mixture', 'lt-pretrain-tokens', { sourceHandle: 'right', targetHandle: 'left' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-pretrain-tokens', 'lt-base-model', { sourceHandle: 'bottom', targetHandle: 'top' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-next-token', 'lt-base-model', { sourceHandle: 'top', targetHandle: 'bottom', lineStyle: 'dashed', arrowEnd: 'open', semantic: 'gradient' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-base-model', 'lt-sft-model', { width: 4.6, sourceHandle: 'right', targetHandle: 'left', label: t('base', '基础'), semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-sft-model', 'lt-dpo-objective', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'gradient' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-sft-model', 'lt-rlhf-objective', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'gradient' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-dpo-objective', 'lt-aligned-model', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'optional' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-rlhf-objective', 'lt-aligned-model', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'optional' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-aligned-model', 'lt-deploy-model', { width: 4.6, sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-deploy-model', 'lt-capability-plot', { sourceHandle: 'bottom', targetHandle: 'top' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-capability-plot', 'lt-response', { sourceHandle: 'bottom', targetHandle: 'top' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-capability-plot', 'lt-curation', {
+        routing: 'bezier',
+        feedback: true,
+        routeOffset: 340,
+        sourceHandle: 'right',
+        targetHandle: 'left',
+      }, descriptionFontSize),
+    ];
+  }
+  return { nodes, edges, width, height };
+}
+
+function buildDoubleColumnFlagship(
+  options: ScientificSchematicOptions,
+  provenance: ScientificProvenance,
+): Blueprint | undefined {
+  const blueprint = buildPresentationFlagship(options, provenance, false);
+  if (!blueprint) return undefined;
+  const stageWidths = [350, 350, 510, 350];
+  const oldStageX = [24, 426, 828, 1230];
+  const oldStageWidth = 380;
+  const oldStageY = 92;
+  const oldStageHeight = 748;
+  const doubleHeight = 1040;
+  const doubleStageHeight = 908;
+  const stageX = stageWidths.reduce<number[]>((values, width, index) => {
+    if (index === 0) return [24];
+    return [...values, values[index - 1] + stageWidths[index - 1] + 24];
+  }, []);
+  const stageNodes = blueprint.nodes.filter((node) => node.data.schematicRole === 'phase');
+  const stageIndexById = new Map(stageNodes.map((node, index) => [node.id, index]));
+  const nodes = blueprint.nodes.map((node) => {
+    const role = node.data.schematicRole;
+    const fontSize = role === 'frame'
+      ? PUBLICATION_TYPOGRAPHY.figureTitle
+      : role === 'phase'
+        ? PUBLICATION_TYPOGRAPHY.stageTitle
+        : role === 'annotation'
+          ? PUBLICATION_TYPOGRAPHY.annotation
+          : PUBLICATION_TYPOGRAPHY.moduleLabel;
+    if (role === 'frame') {
+      return {
+        ...node,
+        style: { ...node.style, height: doubleHeight },
+        data: { ...node.data, fontSize },
+      };
+    }
+    if (node.id === 'vla-input-merge' || node.id === 'wm-input-merge') {
+      const width = Number(node.style?.width ?? 1);
+      const height = Number(node.style?.height ?? 1);
+      const relativeCenterY = (node.position.y + height / 2 - oldStageY) / oldStageHeight;
+      const nextY = oldStageY + relativeCenterY * doubleStageHeight - height / 2;
+      return {
+        ...node,
+        position: { x: stageX[1] - width, y: nextY },
+        data: { ...node.data, fontSize },
+      };
+    }
+    const explicitStageIndex = stageIndexById.get(node.id);
+    if (explicitStageIndex !== undefined) {
+      return {
+        ...node,
+        position: { ...node.position, x: stageX[explicitStageIndex] },
+        style: { ...node.style, width: stageWidths[explicitStageIndex], height: doubleStageHeight },
+        data: { ...node.data, fontSize },
+      };
+    }
+    const width = Number(node.style?.width ?? 1);
+    const center = node.position.x + width / 2;
+    const stageIndex = oldStageX.findIndex((x) => center >= x && center <= x + oldStageWidth);
+    if (stageIndex < 0) return { ...node, data: { ...node.data, fontSize } };
+    const relativeCenter = (center - oldStageX[stageIndex]) / oldStageWidth;
+    const availableWidth = Math.max(1, stageWidths[stageIndex] - 28);
+    const nextWidth = Math.min(width, availableWidth);
+    const unconstrainedX = stageX[stageIndex] + relativeCenter * stageWidths[stageIndex] - nextWidth / 2;
+    const nextX = Math.max(
+      stageX[stageIndex] + 14,
+      Math.min(stageX[stageIndex] + stageWidths[stageIndex] - 14 - nextWidth, unconstrainedX),
+    );
+    const height = Number(node.style?.height ?? 1);
+    const relativeCenterY = (node.position.y + height / 2 - oldStageY) / oldStageHeight;
+    const nextY = oldStageY + relativeCenterY * doubleStageHeight - height / 2;
+    return {
+      ...node,
+      position: { x: nextX, y: nextY },
+      style: { ...node.style, width: nextWidth },
+      data: { ...node.data, fontSize },
+    };
+  });
+  const edges = blueprint.edges.map((edge) => ({
+    ...edge,
+    data: {
+      ...edge.data!,
+      labelFontSize: PUBLICATION_TYPOGRAPHY.edgeLabel,
+      routeOffset: options.templateId === 'vla-policy'
+        && edge.source === 'vla-robot'
+        && edge.target === 'vla-scene'
+        ? 442
+        : options.templateId === 'llm-training-pipeline'
+          && edge.source === 'lt-capability-plot'
+          && edge.target === 'lt-curation'
+          ? 412
+        : edge.data?.routeOffset,
+    },
+  }));
+  return { ...blueprint, nodes, edges, height: doubleHeight };
+}
+
+interface PositionedFlagshipStage extends FlagshipStage {
+  x: number;
+  width: number;
+  colorRole: 'modality' | 'backbone' | 'policy' | 'environment';
+}
+
+function positionedFlagshipFrame(
+  palette: SchematicPalette,
+  options: ScientificSchematicOptions,
+  provenance: ScientificProvenance,
+  width: number,
+  height: number,
+  stages: PositionedFlagshipStage[],
+  stageHeight: number,
+  stageFontSize = 38,
+  stageTextPaddingX = 13,
+  stageTextPaddingY = 8,
+): FlowNode[] {
+  const nodes = [moduleNode(palette, {
+    id: `${options.templateId}-responsive-root`,
+    kind: 'group',
+    role: 'frame',
+    x: 0,
+    y: 0,
+    width,
+    height,
+    label: options.title,
+    fontSize: 48,
+    scientificRole: 'schematic-root',
+    provenance,
+    fill: '#FFFFFF',
+    stroke: 'none',
+    borderWidth: 0,
+    radius: 0,
+  })];
+  stages.forEach((stage) => nodes.push(moduleNode(palette, {
+    id: stage.id,
+    kind: 'group',
+    role: 'phase',
+    x: stage.x,
+    y: 92,
+    width: stage.width,
+    height: stageHeight,
+    label: stage.label,
+    fontSize: stageFontSize,
+    fill: washWithWhite(palette[stage.colorRole].fill),
+    stroke: 'none',
+    borderWidth: 0,
+    radius: 4,
+    textPaddingX: stageTextPaddingX,
+    textPaddingY: stageTextPaddingY,
+  })));
+  return nodes;
+}
+
+function buildPublicationDoubleFlagship(
+  options: ScientificSchematicOptions,
+  provenance: ScientificProvenance,
+): Blueprint | undefined {
+  const palette = PALETTES[options.style];
+  const t = (en: string, zh: string) => text(options.language, en, zh);
+  const width = 1680;
+  const height = 1040;
+  const fontSize = PUBLICATION_TYPOGRAPHY.moduleLabel;
+  const annotationFontSize = PUBLICATION_TYPOGRAPHY.annotation;
+  const stagesByTemplate: Partial<Record<ScientificSchematicTemplateId, PositionedFlagshipStage[]>> = {
+    'vla-policy': [
+      { id: 'vla-dc-a', label: t('A  Task evidence', 'A  任务证据'), x: 24, width: 350, colorRole: 'modality' },
+      { id: 'vla-dc-b', label: t('B  Multimodal policy', 'B  多模态策略'), x: 398, width: 350, colorRole: 'backbone' },
+      { id: 'vla-dc-c', label: t('C  Contact-aware action', 'C  接触感知动作'), x: 772, width: 510, colorRole: 'policy' },
+      { id: 'vla-dc-d', label: t('D  Physical execution', 'D  物理执行'), x: 1306, width: 350, colorRole: 'environment' },
+    ],
+    'world-model-rollout': [
+      { id: 'wm-dc-a', label: t('A  Current evidence', 'A  当前证据'), x: 24, width: 350, colorRole: 'modality' },
+      { id: 'wm-dc-b', label: t('B  Predictive state', 'B  预测状态'), x: 398, width: 350, colorRole: 'backbone' },
+      { id: 'wm-pr-c', label: t('C  Counterfactual futures', 'C  反事实未来'), x: 772, width: 510, colorRole: 'policy' },
+      { id: 'wm-dc-d', label: t('D  Act and verify', 'D  执行验证'), x: 1306, width: 350, colorRole: 'environment' },
+    ],
+    'llm-training-pipeline': [
+      { id: 'lt-dc-a', label: t('A  Versioned data', 'A  版本化数据'), x: 24, width: 350, colorRole: 'modality' },
+      { id: 'lt-dc-b', label: t('B  Pretraining', 'B  预训练'), x: 398, width: 350, colorRole: 'backbone' },
+      { id: 'lt-dc-c', label: t('C  Alternative alignment', 'C  替代对齐路径'), x: 772, width: 510, colorRole: 'policy' },
+      { id: 'lt-dc-d', label: t('D  Evidence gate', 'D  证据门'), x: 1306, width: 350, colorRole: 'environment' },
+    ],
+  };
+  const stages = stagesByTemplate[options.templateId];
+  if (!stages) return buildDoubleColumnFlagship(options, provenance);
+  const stageFontSize = options.templateId === 'vla-policy' ? 32 : 38;
+  const nodes = positionedFlagshipFrame(palette, options, provenance, width, height, stages, 908, stageFontSize);
+  const node = (input: NodeOptions) => moduleNode(palette, { ...input, fontSize: input.fontSize ?? fontSize });
+  let edges: FlowEdge[];
+
+  if (options.templateId === 'vla-policy') {
+    nodes.push(
+      node({ id: 'vla-camera-front', kind: 'scientific-camera', role: 'modality', x: 48, y: 170, width: 138, height: 150, label: t('Front RGB-D', '前视 RGB-D') }),
+      node({ id: 'vla-camera-wrist', kind: 'scientific-camera', role: 'modality', x: 210, y: 170, width: 138, height: 150, label: t('Wrist RGB-D', '腕部 RGB-D') }),
+      node({ id: 'vla-language', kind: 'scientific-prompt-card', role: 'modality', x: 48, y: 365, width: 300, height: 120, label: t('Place cube in target', '将方块放入目标区') }),
+      node({ id: 'vla-object-before', kind: 'scientific-task-object', role: 'loss', x: 48, y: 535, width: 120, height: 155, label: t('Object at t', 't 时刻物体'), variant: 'object-cube' }),
+      node({ id: 'vla-goal-before', kind: 'scientific-goal-region', role: 'environment', x: 198, y: 535, width: 150, height: 155, label: t('Goal region', '目标区域'), variant: 'goal-bin' }),
+      node({ id: 'vla-state', kind: 'scientific-tensor', role: 'modality', x: 48, y: 745, width: 300, height: 125, label: t('Robot state', '机器人状态'), description: 'q_t · dq_t · g_t' }),
+      node({ id: 'vla-input-merge', kind: 'on-page-connector', role: 'token', x: 374, y: 232, width: 28, height: 28, label: '', fontSize: 20 }),
+      node({ id: 'vla-fusion', kind: 'scientific-token-strip', role: 'token', x: 430, y: 170, width: 286, height: 120, label: t('Vision · text · state tokens', '视觉 · 文本 · 状态 token') }),
+      node({ id: 'vla-backbone', kind: 'scientific-transformer', role: 'backbone', x: 430, y: 350, width: 286, height: 245, label: options.backbone || t('VLM backbone', 'VLM 主干'), description: t('shared causal attention', '共享因果注意力'), variant: 'vlm' }),
+      node({ id: 'vla-state-frame', kind: 'scientific-coordinate-frame', role: 'annotation', x: 445, y: 680, width: 120, height: 160, label: t('Base frame', '基座坐标'), fontSize: annotationFontSize }),
+      node({ id: 'vla-attention', kind: 'scientific-attention-map', role: 'annotation', x: 580, y: 680, width: 120, height: 160, label: t('Object focus', '物体注意'), fontSize: annotationFontSize }),
+      node({ id: 'vla-action-expert', kind: 'scientific-layer-stack', role: 'policy', x: 820, y: 170, width: 414, height: 190, label: t('Flow-matching action expert', '流匹配动作专家'), variant: 'diffusion-action' }),
+      node({ id: 'vla-decision', kind: 'scientific-decision-gate', role: 'policy', x: 800, y: 430, width: 200, height: 150, label: t('Risk and reachability', '风险与可达性'), variant: 'risk-ranking' }),
+      node({ id: 'vla-action-chunk', kind: 'scientific-action-chunk', role: 'action', x: 1030, y: 430, width: 210, height: 150, label: t('H=16 · 6-DoF + gripper', 'H=16 · 6-DoF + 夹爪'), variant: 'action-horizon' }),
+      node({ id: 'vla-coordinate', kind: 'scientific-coordinate-frame', role: 'annotation', x: 800, y: 650, width: 145, height: 160, label: t('Tool frame', '工具坐标'), fontSize: annotationFontSize }),
+      node({ id: 'vla-trajectory-plan', kind: 'scientific-trajectory', role: 'action', x: 975, y: 650, width: 265, height: 160, label: t('Planned waypoint path', '规划路点轨迹') }),
+      node({ id: 'vla-contact-plan', kind: 'scientific-contact-point', role: 'loss', x: 930, y: 845, width: 180, height: 125, label: t('Planned contact', '规划接触'), variant: 'force-contact' }),
+      node({ id: 'vla-controller', role: 'action', x: 1332, y: 170, width: 298, height: 120, label: t('Safety + controller', '安全约束 + 控制器') }),
+      node({ id: 'vla-robot', kind: 'scientific-robot-arm', role: 'environment', x: 1332, y: 350, width: 135, height: 220, label: t('Robot arm', '机械臂') }),
+      node({ id: 'vla-trajectory', kind: 'scientific-trajectory', role: 'action', x: 1490, y: 350, width: 140, height: 220, label: t('Executed path', '执行轨迹') }),
+      node({ id: 'vla-contact', kind: 'scientific-contact-point', role: 'loss', x: 1332, y: 630, width: 92, height: 145, label: t('Grip', '接触'), variant: 'force-contact' }),
+      node({ id: 'vla-object-after', kind: 'scientific-task-object', role: 'loss', x: 1440, y: 630, width: 92, height: 145, label: t('Lift', '抬升'), variant: 'object-cube' }),
+      node({ id: 'vla-goal-after', kind: 'scientific-goal-region', role: 'environment', x: 1548, y: 630, width: 82, height: 145, label: t('Goal', '放置'), variant: 'goal-bin' }),
+      node({ id: 'vla-reobserve', kind: 'scientific-camera', role: 'modality', x: 1332, y: 835, width: 298, height: 125, label: t('Next observation o(t+1)', '下一观测 o(t+1)') }),
+    );
+    edges = [
+      responsiveEdge(palette, 'vla-camera-front', 'vla-camera-wrist', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }),
+      responsiveEdge(palette, 'vla-camera-wrist', 'vla-input-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }),
+      responsiveEdge(palette, 'vla-input-merge', 'vla-fusion', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'vla-language', 'vla-backbone', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'vla-state', 'vla-state-frame', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'vla-state-frame', 'vla-backbone', { routing: 'straight', sourceHandle: 'top', targetHandle: 'bottom' }),
+      responsiveEdge(palette, 'vla-fusion', 'vla-backbone', { sourceHandle: 'bottom', targetHandle: 'top' }),
+      responsiveEdge(palette, 'vla-backbone', 'vla-action-expert', { width: PUBLICATION_STROKES.primary, sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'vla-action-expert', 'vla-decision', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }),
+      responsiveEdge(palette, 'vla-decision', 'vla-action-chunk', { sourceHandle: 'right', targetHandle: 'left', semantic: 'control' }),
+      responsiveEdge(palette, 'vla-action-chunk', 'vla-controller', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }),
+      responsiveEdge(palette, 'vla-controller', 'vla-robot', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }),
+      responsiveEdge(palette, 'vla-robot', 'vla-trajectory', { sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }),
+      responsiveEdge(palette, 'vla-trajectory', 'vla-contact', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }),
+      responsiveEdge(palette, 'vla-contact', 'vla-object-after', { sourceHandle: 'right', targetHandle: 'left', semantic: 'control' }),
+      responsiveEdge(palette, 'vla-object-after', 'vla-goal-after', { sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }),
+      responsiveEdge(palette, 'vla-goal-after', 'vla-reobserve', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top' }),
+      responsiveEdge(palette, 'vla-reobserve', 'vla-camera-front', { feedback: true, routeSide: 'bottom-left', routeOffset: 24, sourceHandle: 'bottom', targetHandle: 'left' }),
+    ];
+  } else if (options.templateId === 'world-model-rollout') {
+    nodes.push(
+      node({ id: 'wm-camera-front', kind: 'scientific-camera', role: 'modality', x: 48, y: 170, width: 138, height: 150, label: t('Front view', '前视相机') }),
+      node({ id: 'wm-camera-wrist', kind: 'scientific-camera', role: 'modality', x: 210, y: 170, width: 138, height: 150, label: t('Wrist view', '腕部相机') }),
+      node({ id: 'wm-goal', kind: 'scientific-prompt-card', role: 'modality', x: 48, y: 370, width: 300, height: 120, label: t('Goal condition', '目标条件') }),
+      node({ id: 'wm-state-token', kind: 'scientific-timeline', role: 'token', x: 48, y: 550, width: 300, height: 150, label: t('Observed history', '观测历史'), description: 'o(t-k) · a(t-k) · … · o(t)' }),
+      node({ id: 'wm-object', kind: 'scientific-task-object', role: 'loss', x: 48, y: 770, width: 120, height: 150, label: t('Object state', '物体状态'), variant: 'object-cube' }),
+      node({ id: 'wm-goal-region', kind: 'scientific-goal-region', role: 'environment', x: 198, y: 770, width: 150, height: 150, label: t('Target state', '目标状态'), variant: 'goal-bin' }),
+      node({ id: 'wm-input-merge', kind: 'on-page-connector', role: 'bridge', x: 374, y: 470, width: 28, height: 28, label: '', fontSize: 20 }),
+      node({ id: 'wm-voxel', kind: 'scientific-voxel-grid', role: 'encoder', x: 430, y: 170, width: 286, height: 190, label: t('3D latent state z(t)', '3D 潜在状态 z(t)') }),
+      node({ id: 'wm-model', kind: 'scientific-transformer', role: 'backbone', x: 430, y: 420, width: 286, height: 250, label: options.backbone || t('Latent world model', '潜在世界模型'), description: 'p(z(t+1) | z(t), a(t))', variant: 'world-model' }),
+      node({ id: 'wm-coordinate', kind: 'scientific-equation', role: 'annotation', x: 430, y: 750, width: 286, height: 150, label: t('Prediction objective', '预测目标'), description: 'L_pred = d(z_hat(t+1), z(t+1))', fontSize: annotationFontSize }),
+      node({ id: 'wm-horizon', kind: 'scientific-timeline', role: 'annotation', x: 800, y: 150, width: 450, height: 105, label: t('Shared horizon t0 → tH', '共享时域 t0 → tH'), fontSize: annotationFontSize }),
+      node({ id: 'wm-rollout-split', kind: 'on-page-connector', role: 'backbone', x: 1004, y: 275, width: 42, height: 42, label: '', fontSize: 20 }),
+      node({ id: 'wm-rollout-a', kind: 'scientific-scene-frame', role: 'environment', x: 795, y: 345, width: 145, height: 190, label: t('A · goal reached', 'A · 达成目标'), description: 'S_A ↑', variant: 'success' }),
+      node({ id: 'wm-rollout-b', kind: 'scientific-scene-frame', role: 'loss', x: 955, y: 345, width: 145, height: 190, label: t('B · collision', 'B · 发生碰撞'), description: 'C_B ↑', variant: 'collision' }),
+      node({ id: 'wm-rollout-c', kind: 'scientific-scene-frame', role: 'annotation', x: 1115, y: 345, width: 145, height: 190, label: t('C · occluded', 'C · 遮挡不确定'), description: 'U_C ↑', variant: 'uncertain' }),
+      node({ id: 'wm-score-a', kind: 'scientific-probability-bars', role: 'environment', x: 795, y: 580, width: 145, height: 130, label: t('Success score', '成功评分') }),
+      node({ id: 'wm-score-b', kind: 'scientific-probability-bars', role: 'loss', x: 955, y: 580, width: 145, height: 130, label: t('Contact cost', '接触代价') }),
+      node({ id: 'wm-score-c', kind: 'scientific-uncertainty-band', role: 'annotation', x: 1115, y: 580, width: 145, height: 130, label: t('U band', 'U 带') }),
+      node({ id: 'wm-score-merge', kind: 'on-page-connector', role: 'policy', x: 1190, y: 760, width: 60, height: 60, label: 'S', fontSize: annotationFontSize }),
+      node({ id: 'wm-decision', kind: 'scientific-decision-gate', role: 'policy', x: 1332, y: 170, width: 298, height: 160, label: t('Select A under constraints', '约束下选择 A'), variant: 'risk-ranking' }),
+      node({ id: 'wm-action', kind: 'scientific-action-chunk', role: 'action', x: 1332, y: 390, width: 298, height: 130, label: t('Execute action horizon H', '执行动作时域 H'), variant: 'action-horizon' }),
+      node({ id: 'wm-robot', kind: 'scientific-robot-arm', role: 'environment', x: 1332, y: 580, width: 130, height: 190, label: t('Physical robot', '实体机器人') }),
+      node({ id: 'wm-reobserve', kind: 'scientific-camera', role: 'modality', x: 1480, y: 580, width: 150, height: 190, label: t('Observed t+1', '实测 t+1') }),
+      node({ id: 'wm-error', kind: 'scientific-metric-panel', role: 'loss', x: 1332, y: 830, width: 298, height: 130, label: t('Prediction error', '预测误差'), variant: 'prediction-error' }),
+    );
+    edges = [
+      responsiveEdge(palette, 'wm-camera-front', 'wm-camera-wrist', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }),
+      responsiveEdge(palette, 'wm-camera-wrist', 'wm-voxel', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'wm-goal', 'wm-input-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }),
+      responsiveEdge(palette, 'wm-state-token', 'wm-input-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }),
+      responsiveEdge(palette, 'wm-input-merge', 'wm-model', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'wm-voxel', 'wm-model', { sourceHandle: 'bottom', targetHandle: 'top' }),
+      responsiveEdge(palette, 'wm-model', 'wm-horizon', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'broadcast' }),
+      responsiveEdge(palette, 'wm-horizon', 'wm-rollout-split', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'broadcast' }),
+      responsiveEdge(palette, 'wm-rollout-split', 'wm-rollout-a', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'broadcast' }),
+      responsiveEdge(palette, 'wm-rollout-split', 'wm-rollout-b', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'broadcast' }),
+      responsiveEdge(palette, 'wm-rollout-split', 'wm-rollout-c', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', lineStyle: 'dashed', semantic: 'broadcast' }),
+      responsiveEdge(palette, 'wm-rollout-a', 'wm-score-a', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }),
+      responsiveEdge(palette, 'wm-rollout-b', 'wm-score-b', { sourceHandle: 'bottom', targetHandle: 'top', lineStyle: 'dotted', arrowEnd: 'open', semantic: 'optional' }),
+      responsiveEdge(palette, 'wm-rollout-c', 'wm-score-c', { sourceHandle: 'bottom', targetHandle: 'top', lineStyle: 'dashed', arrowEnd: 'open', semantic: 'optional' }),
+      responsiveEdge(palette, 'wm-score-a', 'wm-score-merge', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', width: PUBLICATION_STROKES.primary, semantic: 'control' }),
+      responsiveEdge(palette, 'wm-score-b', 'wm-score-merge', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'left', lineStyle: 'dotted', arrowEnd: 'open', semantic: 'optional' }),
+      responsiveEdge(palette, 'wm-score-c', 'wm-score-merge', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', lineStyle: 'dashed', arrowEnd: 'open', semantic: 'optional' }),
+      responsiveEdge(palette, 'wm-score-merge', 'wm-decision', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'control' }),
+      responsiveEdge(palette, 'wm-decision', 'wm-action', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }),
+      responsiveEdge(palette, 'wm-action', 'wm-robot', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'temporal' }),
+      responsiveEdge(palette, 'wm-robot', 'wm-reobserve', { sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }),
+      responsiveEdge(palette, 'wm-reobserve', 'wm-error', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'data' }),
+      responsiveEdge(palette, 'wm-error', 'wm-camera-front', { feedback: true, routeSide: 'bottom-left', routeOffset: 24, sourceHandle: 'bottom', targetHandle: 'left' }),
+    ];
+  } else {
+    nodes.push(
+      node({ id: 'lt-raw-data', kind: 'scientific-data-funnel', role: 'dataset', x: 48, y: 170, width: 300, height: 170, label: t('Web · code · domain', '网页 · 代码 · 领域数据') }),
+      node({ id: 'lt-curation', role: 'bridge', x: 48, y: 400, width: 300, height: 120, label: t('Filter · dedupe · license', '过滤 · 去重 · 许可') }),
+      node({ id: 'lt-mixture', kind: 'scientific-dataset-stack', role: 'dataset', x: 48, y: 580, width: 300, height: 160, label: t('Versioned data mixture', '版本化数据混合') }),
+      node({ id: 'lt-mixture-contract', kind: 'scientific-probability-bars', role: 'annotation', x: 48, y: 800, width: 300, height: 130, label: t('Source mix contract', '来源混合契约'), fontSize: annotationFontSize }),
+      node({ id: 'lt-pretrain-tokens', kind: 'scientific-token-strip', role: 'token', x: 430, y: 170, width: 286, height: 120, label: t('Next-token batches', '下一 token 批次') }),
+      node({ id: 'lt-base-model', kind: 'scientific-transformer', role: 'backbone', x: 430, y: 350, width: 286, height: 250, label: options.backbone || t('Base model theta_0', '基础模型 theta_0'), description: t('autoregressive pretraining', '自回归预训练'), variant: 'base-model' }),
+      node({ id: 'lt-next-token', kind: 'scientific-equation', role: 'loss', x: 430, y: 680, width: 286, height: 150, label: 'L_NLL', description: '-log p_theta(x_i | x_<i)', fontSize: annotationFontSize }),
+      node({ id: 'lt-sft-model', kind: 'scientific-trainable', role: 'policy', x: 800, y: 230, width: 200, height: 145, label: 'SFT checkpoint', description: 'theta_ref' }),
+      node({ id: 'lt-alignment-split', kind: 'on-page-connector', role: 'policy', x: 750, y: 410, width: 40, height: 40, label: '', fontSize: 20 }),
+      node({ id: 'lt-preference-data', kind: 'scientific-preference-pair', role: 'dataset', x: 1030, y: 230, width: 220, height: 145, label: t('Chosen / rejected pairs', '偏好样本对') }),
+      node({ id: 'lt-dpo-objective', kind: 'scientific-loss-target', role: 'loss', x: 800, y: 470, width: 200, height: 150, label: 'DPO', description: 'prefs · theta_ref · beta', variant: 'preference-objective' }),
+      node({ id: 'lt-dpo-checkpoint', kind: 'scientific-transformer', role: 'backbone', x: 1030, y: 470, width: 220, height: 150, label: 'DPO checkpoint', description: 'theta_D', variant: 'checkpoint' }),
+      node({ id: 'lt-rlhf-objective', kind: 'scientific-loss-target', role: 'policy', x: 800, y: 680, width: 200, height: 150, label: 'RM + PPO', description: 'r_phi · KL', variant: 'preference-objective' }),
+      node({ id: 'lt-rlhf-checkpoint', kind: 'scientific-transformer', role: 'backbone', x: 1030, y: 680, width: 220, height: 150, label: 'RL checkpoint', description: 'theta_RL', variant: 'checkpoint' }),
+      node({ id: 'lt-alignment-merge', kind: 'on-page-connector', role: 'backbone', x: 1260, y: 860, width: 70, height: 70, label: 'M', fontSize: annotationFontSize }),
+      node({ id: 'lt-deploy-model', kind: 'scientific-transformer', role: 'backbone', x: 1332, y: 170, width: 298, height: 160, label: t('Aligned model', '对齐模型'), description: 'theta*', variant: 'aligned-model' }),
+      node({ id: 'lt-capability-plot', kind: 'scientific-metric-panel', role: 'action', x: 1332, y: 390, width: 298, height: 150, label: t('Capability + safety', '能力 + 安全'), description: t('tasks · baselines · seeds · CI', '任务 · 基线 · 种子 · CI'), variant: 'capability-safety' }),
+      node({ id: 'lt-failure-slice', kind: 'scientific-ablation-table', role: 'loss', x: 1332, y: 600, width: 298, height: 150, label: t('Worst-slice inspection', '最差切片检查') }),
+      node({ id: 'lt-release-gate', kind: 'scientific-release-gate', role: 'policy', x: 1332, y: 810, width: 145, height: 150, label: t('Release gate', '发布门'), variant: 'release-gate' }),
+      node({ id: 'lt-response', kind: 'scientific-token-strip', role: 'action', x: 1490, y: 810, width: 140, height: 150, label: t('Drift monitor', '漂移监测'), variant: 'telemetry' }),
+    );
+    edges = [
+      responsiveEdge(palette, 'lt-raw-data', 'lt-curation', { sourceHandle: 'bottom', targetHandle: 'top' }),
+      responsiveEdge(palette, 'lt-curation', 'lt-mixture', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'temporal' }),
+      responsiveEdge(palette, 'lt-mixture', 'lt-pretrain-tokens', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left' }),
+      responsiveEdge(palette, 'lt-pretrain-tokens', 'lt-base-model', { sourceHandle: 'bottom', targetHandle: 'top' }),
+      responsiveEdge(palette, 'lt-next-token', 'lt-base-model', { sourceHandle: 'top', targetHandle: 'bottom', lineStyle: 'dashed', arrowEnd: 'open', semantic: 'gradient' }),
+      responsiveEdge(palette, 'lt-base-model', 'lt-sft-model', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', width: PUBLICATION_STROKES.primary, label: t('base', '基础'), semantic: 'temporal' }, annotationFontSize),
+      responsiveEdge(palette, 'lt-sft-model', 'lt-alignment-split', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'temporal' }),
+      responsiveEdge(palette, 'lt-alignment-split', 'lt-dpo-objective', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'gradient' }),
+      responsiveEdge(palette, 'lt-alignment-split', 'lt-rlhf-objective', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'gradient' }),
+      responsiveEdge(palette, 'lt-preference-data', 'lt-dpo-objective', { routing: 'straight', sourceHandle: 'left', targetHandle: 'right' }),
+      responsiveEdge(palette, 'lt-dpo-objective', 'lt-dpo-checkpoint', { sourceHandle: 'right', targetHandle: 'left', semantic: 'optional' }),
+      responsiveEdge(palette, 'lt-rlhf-objective', 'lt-rlhf-checkpoint', { sourceHandle: 'right', targetHandle: 'left', semantic: 'optional' }),
+      responsiveEdge(palette, 'lt-dpo-checkpoint', 'lt-alignment-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'top', semantic: 'optional' }),
+      responsiveEdge(palette, 'lt-rlhf-checkpoint', 'lt-alignment-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'optional' }),
+      responsiveEdge(palette, 'lt-alignment-merge', 'lt-deploy-model', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', width: PUBLICATION_STROKES.primary, semantic: 'temporal' }),
+      responsiveEdge(palette, 'lt-deploy-model', 'lt-capability-plot', { sourceHandle: 'bottom', targetHandle: 'top' }),
+      responsiveEdge(palette, 'lt-capability-plot', 'lt-failure-slice', { sourceHandle: 'bottom', targetHandle: 'top' }),
+      responsiveEdge(palette, 'lt-failure-slice', 'lt-release-gate', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }),
+      responsiveEdge(palette, 'lt-release-gate', 'lt-response', { sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }),
+      responsiveEdge(palette, 'lt-response', 'lt-curation', { feedback: true, routeSide: 'bottom-left', routeOffset: 24, sourceHandle: 'bottom', targetHandle: 'left' }),
+    ];
+  }
+  return { nodes, edges, width, height };
+}
+
+function buildTalkFlagship(
+  options: ScientificSchematicOptions,
+  provenance: ScientificProvenance,
+): Blueprint | undefined {
+  const palette = PALETTES[options.style];
+  const t = (en: string, zh: string) => text(options.language, en, zh);
+  const width = 1680;
+  const height = 880;
+  const fontSize = 40;
+  const descriptionFontSize = 34;
+  const stagesByTemplate: Partial<Record<ScientificSchematicTemplateId, PositionedFlagshipStage[]>> = {
+    'vla-policy': [
+      { id: 'vla-pr-a', label: t('A  Task state', 'A  任务状态'), x: 24, width: 420, colorRole: 'modality' },
+      { id: 'vla-pr-b', label: t('B  Multimodal action policy', 'B  多模态动作策略'), x: 468, width: 570, colorRole: 'backbone' },
+      { id: 'vla-pr-c', label: t('C  Grounded closed loop', 'C  接地闭环'), x: 1062, width: 594, colorRole: 'environment' },
+    ],
+    'world-model-rollout': [
+      { id: 'wm-pr-a', label: t('A  Current evidence', 'A  当前证据'), x: 24, width: 400, colorRole: 'modality' },
+      { id: 'wm-pr-b', label: t('B  Predictive state', 'B  预测状态'), x: 448, width: 280, colorRole: 'backbone' },
+      { id: 'wm-pr-c', label: t('C  Future rollouts', 'C  未来展开'), x: 752, width: 508, colorRole: 'policy' },
+      { id: 'wm-pr-d', label: t('D  Act and verify', 'D  执行与验证'), x: 1272, width: 384, colorRole: 'environment' },
+    ],
+    'llm-training-pipeline': [
+      { id: 'lt-pr-a', label: t('A  Reference policy', 'A  参考策略'), x: 24, width: 460, colorRole: 'modality' },
+      { id: 'lt-pr-b', label: t('B  Alignment alternatives', 'B  对齐分支'), x: 508, width: 720, colorRole: 'policy' },
+      { id: 'lt-pr-c', label: t('C  Evidence gate', 'C  证据门'), x: 1252, width: 404, colorRole: 'environment' },
+    ],
+  };
+  const stages = stagesByTemplate[options.templateId];
+  if (!stages) return buildPresentationFlagship(options, provenance);
+  const nodes = positionedFlagshipFrame(palette, options, provenance, width, height, stages, 748, 38, 27, 26);
+  const node = (input: NodeOptions) => moduleNode(palette, { ...input, fontSize: input.fontSize ?? fontSize });
+  let edges: FlowEdge[];
+
+  if (options.templateId === 'vla-policy') {
+    nodes.push(
+      node({ id: 'vla-camera-front', kind: 'scientific-camera', role: 'modality', x: 50, y: 180, width: 150, height: 150, label: t('Front RGB-D', '前视 RGB-D') }),
+      node({ id: 'vla-camera-wrist', kind: 'scientific-camera', role: 'modality', x: 225, y: 180, width: 160, height: 150, label: t('Wrist RGB-D', '腕部 RGB-D') }),
+      node({ id: 'vla-language', kind: 'scientific-prompt-card', role: 'modality', x: 50, y: 390, width: 335, height: 120, label: t('Place the cube in the target', '将方块放入目标区') }),
+      node({ id: 'vla-object-before', kind: 'scientific-task-object', role: 'loss', x: 50, y: 570, width: 130, height: 170, label: t('Cube', '方块'), variant: 'object-cube' }),
+      node({ id: 'vla-goal-before', kind: 'scientific-goal-region', role: 'environment', x: 220, y: 570, width: 165, height: 170, label: t('Target region', '目标区域'), variant: 'goal-bin' }),
+      node({ id: 'vla-input-merge', kind: 'on-page-connector', role: 'token', x: 438, y: 238, width: 30, height: 30, label: '', fontSize: 22 }),
+      node({ id: 'vla-fusion', kind: 'scientific-token-strip', role: 'token', x: 500, y: 180, width: 500, height: 120, label: t('Vision · instruction · robot-state tokens', '视觉 · 指令 · 机器人状态 token') }),
+      node({ id: 'vla-backbone', kind: 'scientific-transformer', role: 'backbone', x: 500, y: 360, width: 240, height: 250, label: options.backbone || t('VLM backbone', 'VLM 主干'), variant: 'vlm' }),
+      node({ id: 'vla-action-expert', kind: 'scientific-layer-stack', role: 'policy', x: 760, y: 360, width: 240, height: 250, label: t('Flow action expert', '流动作专家'), variant: 'diffusion-action' }),
+      node({ id: 'vla-action-chunk', kind: 'scientific-action-chunk', role: 'action', x: 560, y: 690, width: 380, height: 120, label: t('H=16 · 6-DoF trajectory + gripper', 'H=16 · 6-DoF 轨迹 + 夹爪'), variant: 'action-horizon' }),
+      node({ id: 'vla-control-bridge', kind: 'on-page-connector', role: 'action', x: 1038, y: 735, width: 30, height: 30, label: '', fontSize: 22 }),
+      node({ id: 'vla-controller', role: 'action', x: 1090, y: 170, width: 530, height: 120, label: t('Closed-loop controller', '闭环控制器') }),
+      node({ id: 'vla-robot', kind: 'scientific-robot-arm', role: 'environment', x: 1090, y: 360, width: 150, height: 230, label: t('Robot arm', '机械臂') }),
+      node({ id: 'vla-trajectory', kind: 'scientific-trajectory', role: 'action', x: 1260, y: 360, width: 360, height: 180, label: t('Executed 6-DoF path', '执行 6-DoF 轨迹') }),
+      node({ id: 'vla-contact', kind: 'scientific-contact-point', role: 'loss', x: 1260, y: 600, width: 110, height: 120, label: t('Grip', '接触'), variant: 'force-contact' }),
+      node({ id: 'vla-object-after', kind: 'scientific-task-object', role: 'loss', x: 1390, y: 600, width: 110, height: 120, label: t('Lift', '抬升'), variant: 'object-cube' }),
+      node({ id: 'vla-goal-after', kind: 'scientific-goal-region', role: 'environment', x: 1520, y: 600, width: 100, height: 120, label: t('Goal', '放置'), variant: 'goal-bin' }),
+      node({ id: 'vla-reobserve', kind: 'scientific-camera', role: 'modality', x: 1490, y: 740, width: 140, height: 110, label: t('Next obs.', '下一观测') }),
+    );
+    edges = [
+      responsiveEdge(palette, 'vla-camera-front', 'vla-camera-wrist', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-camera-wrist', 'vla-input-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-language', 'vla-fusion', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-input-merge', 'vla-fusion', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-fusion', 'vla-backbone', { sourceHandle: 'bottom', targetHandle: 'top' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-backbone', 'vla-action-expert', { width: 4.6, sourceHandle: 'right', targetHandle: 'left' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-action-expert', 'vla-action-chunk', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-action-chunk', 'vla-control-bridge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-control-bridge', 'vla-controller', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-controller', 'vla-robot', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-robot', 'vla-trajectory', { sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-trajectory', 'vla-contact', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-contact', 'vla-object-after', { sourceHandle: 'right', targetHandle: 'left', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-object-after', 'vla-goal-after', { sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-goal-after', 'vla-reobserve', { sourceHandle: 'bottom', targetHandle: 'top' }, descriptionFontSize),
+      responsiveEdge(palette, 'vla-reobserve', 'vla-camera-front', { feedback: true, routeSide: 'bottom-left', routeOffset: 16, sourceHandle: 'bottom', targetHandle: 'left' }, descriptionFontSize),
+    ];
+  } else if (options.templateId === 'world-model-rollout') {
+    nodes.push(
+      node({ id: 'wm-observation', kind: 'scientific-scene-frame', role: 'modality', x: 50, y: 180, width: 340, height: 180, label: t('Observed scene at t', 't 时刻实测场景'), description: t('front + wrist views', '前视 + 腕部视角'), variant: 'multiview' }),
+      node({ id: 'wm-goal', kind: 'scientific-prompt-card', role: 'modality', x: 50, y: 430, width: 340, height: 120, label: t('Goal condition', '目标条件') }),
+      node({ id: 'wm-state-token', kind: 'scientific-timeline', role: 'token', x: 50, y: 610, width: 340, height: 190, label: t('State-action history', '状态动作历史'), description: 'o(t-k) · a(t-k) · … · o(t)' }),
+      node({ id: 'wm-observation-port', kind: 'on-page-connector', role: 'bridge', x: 412, y: 258, width: 24, height: 24, label: '', fontSize: 20 }),
+      node({ id: 'wm-goal-port', kind: 'on-page-connector', role: 'bridge', x: 412, y: 478, width: 24, height: 24, label: '', fontSize: 20 }),
+      node({ id: 'wm-history-port', kind: 'on-page-connector', role: 'bridge', x: 412, y: 690, width: 24, height: 24, label: '', fontSize: 20 }),
+      node({ id: 'wm-model', kind: 'scientific-transformer', role: 'backbone', x: 463, y: 170, width: 250, height: 240, label: options.backbone || t('Latent world model', '潜在世界模型'), description: 'p(z(t+1) | z(t), a(t))', variant: 'world-model' }),
+      node({ id: 'wm-horizon', kind: 'scientific-timeline', role: 'annotation', x: 770, y: 170, width: 450, height: 110, label: t('Shared horizon t0 → tH', '共享时域 t0 → tH'), fontSize: descriptionFontSize }),
+      node({ id: 'wm-rollout-split', kind: 'on-page-connector', role: 'backbone', x: 970, y: 400, width: 42, height: 42, label: '', fontSize: 22 }),
+      node({ id: 'wm-rollout-a', kind: 'scientific-scene-frame', role: 'environment', x: 760, y: 470, width: 160, height: 180, label: 'A | S_A', description: t('goal reached', '目标达成'), variant: 'success', textPaddingX: 6 }),
+      node({ id: 'wm-rollout-b', kind: 'scientific-scene-frame', role: 'loss', x: 930, y: 470, width: 160, height: 180, label: 'B | C_B', description: t('collision', '碰撞'), variant: 'collision', textPaddingX: 6 }),
+      node({ id: 'wm-rollout-c', kind: 'scientific-scene-frame', role: 'annotation', x: 1100, y: 470, width: 160, height: 180, label: 'C | U_C', description: t('occluded', '遮挡'), variant: 'uncertain', textPaddingX: 6 }),
+      node({ id: 'wm-score-merge', kind: 'on-page-connector', role: 'policy', x: 1190, y: 700, width: 70, height: 70, label: 'S', fontSize: descriptionFontSize }),
+      node({ id: 'wm-decision', kind: 'scientific-decision-gate', role: 'policy', x: 1300, y: 170, width: 330, height: 150, label: t('Select rollout A', '选择未来 A'), description: t('score + constraints', '评分 + 约束'), variant: 'risk-ranking' }),
+      node({ id: 'wm-action', kind: 'scientific-action-chunk', role: 'action', x: 1300, y: 390, width: 330, height: 120, label: t('Execute horizon H', '执行时域 H'), variant: 'action-horizon' }),
+      node({ id: 'wm-robot', kind: 'scientific-robot-arm', role: 'environment', x: 1300, y: 570, width: 140, height: 180, label: t('Robot', '机器人') }),
+      node({ id: 'wm-reobserve', kind: 'scientific-camera', role: 'modality', x: 1490, y: 570, width: 140, height: 180, label: t('Obs. t+1', '实测 t+1') }),
+      node({ id: 'wm-error', kind: 'scientific-metric-panel', role: 'loss', x: 1300, y: 770, width: 330, height: 90, label: t('Prediction error', '预测误差'), variant: 'prediction-error' }),
+    );
+    edges = [
+      responsiveEdge(palette, 'wm-observation', 'wm-observation-port', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-goal', 'wm-goal-port', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-state-token', 'wm-history-port', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', arrowEnd: 'none' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-history-port', 'wm-goal-port', { routing: 'straight', sourceHandle: 'top', targetHandle: 'bottom', arrowEnd: 'none' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-goal-port', 'wm-observation-port', { routing: 'straight', sourceHandle: 'top', targetHandle: 'bottom', arrowEnd: 'none' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-observation-port', 'wm-model', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-model', 'wm-horizon', { sourceHandle: 'right', targetHandle: 'left', semantic: 'broadcast' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-horizon', 'wm-rollout-split', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'broadcast' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-rollout-split', 'wm-rollout-a', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'broadcast' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-rollout-split', 'wm-rollout-b', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'broadcast' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-rollout-split', 'wm-rollout-c', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', lineStyle: 'dashed', semantic: 'broadcast' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-rollout-a', 'wm-score-merge', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', width: 4.6, semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-rollout-b', 'wm-score-merge', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'left', lineStyle: 'dotted', arrowEnd: 'open', semantic: 'optional' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-rollout-c', 'wm-score-merge', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', lineStyle: 'dashed', arrowEnd: 'open', semantic: 'optional' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-score-merge', 'wm-decision', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-decision', 'wm-action', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-action', 'wm-robot', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-robot', 'wm-reobserve', { sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-reobserve', 'wm-error', { sourceHandle: 'bottom', targetHandle: 'top' }, descriptionFontSize),
+      responsiveEdge(palette, 'wm-error', 'wm-observation', { feedback: true, routeSide: 'bottom-left', routeOffset: 12, sourceHandle: 'bottom', targetHandle: 'left' }, descriptionFontSize),
+    ];
+  } else {
+    nodes.push(
+      node({ id: 'lt-raw-data', kind: 'scientific-data-funnel', role: 'dataset', x: 50, y: 180, width: 170, height: 160, label: t('Source data', '源数据') }),
+      node({ id: 'lt-curation', role: 'bridge', x: 270, y: 180, width: 190, height: 160, label: t('Filter + dedupe', '过滤 + 去重') }),
+      node({ id: 'lt-pretrain-tokens', kind: 'scientific-token-strip', role: 'token', x: 50, y: 400, width: 170, height: 120, label: t('Token batches', 'Token 批次') }),
+      node({ id: 'lt-base-model', kind: 'scientific-transformer', role: 'backbone', x: 250, y: 390, width: 200, height: 230, label: options.backbone || t('Base model', '基础模型'), description: 'theta_0', variant: 'base-model' }),
+      node({ id: 'lt-sft-model', kind: 'scientific-trainable', role: 'policy', x: 100, y: 660, width: 300, height: 160, label: 'SFT reference checkpoint', description: 'theta_ref' }),
+      node({ id: 'lt-alignment-split', kind: 'on-page-connector', role: 'policy', x: 480, y: 540, width: 42, height: 42, label: '', fontSize: 22 }),
+      node({ id: 'lt-preference-data', kind: 'scientific-preference-pair', role: 'dataset', x: 540, y: 170, width: 260, height: 140, label: t('Preference pairs', '偏好样本') }),
+      node({ id: 'lt-dpo-objective', kind: 'scientific-loss-target', role: 'loss', x: 540, y: 400, width: 220, height: 150, label: 'DPO', description: 'prefs + beta', variant: 'preference-objective' }),
+      node({ id: 'lt-dpo-checkpoint', kind: 'scientific-transformer', role: 'backbone', x: 790, y: 400, width: 220, height: 150, label: 'DPO checkpoint', description: 'theta_D', variant: 'checkpoint' }),
+      node({ id: 'lt-rlhf-objective', kind: 'scientific-loss-target', role: 'policy', x: 540, y: 620, width: 220, height: 150, label: 'RM + PPO', description: 'r_phi · KL', variant: 'preference-objective' }),
+      node({ id: 'lt-rlhf-checkpoint', kind: 'scientific-transformer', role: 'backbone', x: 790, y: 620, width: 220, height: 150, label: 'RL checkpoint', description: 'theta_RL', variant: 'checkpoint' }),
+      node({ id: 'lt-alignment-merge', kind: 'on-page-connector', role: 'backbone', x: 1060, y: 500, width: 80, height: 80, label: 'M', fontSize: descriptionFontSize }),
+      node({ id: 'lt-deploy-model', kind: 'scientific-transformer', role: 'backbone', x: 1030, y: 690, width: 170, height: 150, label: t('Aligned model', '对齐模型'), description: 'theta*', variant: 'aligned-model' }),
+      node({ id: 'lt-capability-plot', kind: 'scientific-metric-panel', role: 'action', x: 1280, y: 170, width: 350, height: 190, label: t('Capability + safety evidence', '能力 + 安全证据'), description: t('tasks · baselines · seeds · CI', '任务 · 基线 · 种子 · CI'), variant: 'capability-safety' }),
+      node({ id: 'lt-failure-slice', kind: 'scientific-ablation-table', role: 'loss', x: 1280, y: 400, width: 350, height: 160, label: t('Worst-slice inspection', '最差切片检查') }),
+      node({ id: 'lt-release-gate', kind: 'scientific-release-gate', role: 'policy', x: 1280, y: 620, width: 160, height: 170, label: t('Release gate', '发布门'), variant: 'release-gate' }),
+      node({ id: 'lt-response', kind: 'scientific-token-strip', role: 'action', x: 1470, y: 620, width: 160, height: 170, label: t('Drift monitor', '漂移监测'), variant: 'telemetry' }),
+    );
+    edges = [
+      responsiveEdge(palette, 'lt-raw-data', 'lt-curation', { sourceHandle: 'right', targetHandle: 'left' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-curation', 'lt-pretrain-tokens', { routing: 'straight', sourceHandle: 'bottom', targetHandle: 'top', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-pretrain-tokens', 'lt-base-model', { sourceHandle: 'right', targetHandle: 'left' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-base-model', 'lt-sft-model', { sourceHandle: 'bottom', targetHandle: 'top', width: 4.6, semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-sft-model', 'lt-alignment-split', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-alignment-split', 'lt-dpo-objective', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'gradient' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-alignment-split', 'lt-rlhf-objective', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left', semantic: 'gradient' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-preference-data', 'lt-dpo-objective', { sourceHandle: 'bottom', targetHandle: 'top' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-dpo-objective', 'lt-dpo-checkpoint', { sourceHandle: 'right', targetHandle: 'left', semantic: 'optional' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-rlhf-objective', 'lt-rlhf-checkpoint', { sourceHandle: 'right', targetHandle: 'left', semantic: 'optional' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-dpo-checkpoint', 'lt-alignment-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'top', semantic: 'optional' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-rlhf-checkpoint', 'lt-alignment-merge', { routing: 'straight', sourceHandle: 'right', targetHandle: 'bottom', semantic: 'optional' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-alignment-merge', 'lt-deploy-model', { sourceHandle: 'bottom', targetHandle: 'top', width: 4.6, semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-deploy-model', 'lt-capability-plot', { routing: 'straight', sourceHandle: 'right', targetHandle: 'left' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-capability-plot', 'lt-failure-slice', { sourceHandle: 'bottom', targetHandle: 'top' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-failure-slice', 'lt-release-gate', { sourceHandle: 'bottom', targetHandle: 'top', semantic: 'control' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-release-gate', 'lt-response', { sourceHandle: 'right', targetHandle: 'left', semantic: 'temporal' }, descriptionFontSize),
+      responsiveEdge(palette, 'lt-response', 'lt-raw-data', { feedback: true, routeSide: 'bottom-left', routeOffset: 60, sourceHandle: 'bottom', targetHandle: 'left' }, descriptionFontSize),
+    ];
+  }
+  return { nodes, edges, width, height };
+}
+
+function schematicLayoutForFigure(spec?: ScientificFigureSpec): ScientificSchematicLayout {
+  if (!spec) return 'freeform';
+  if (spec.widthMm <= 100) return 'single-column';
+  if (spec.widthMm / spec.heightMm >= 1.65 && spec.heightMm <= 115) return 'presentation';
+  return 'double-column';
+}
+
+function preservePhaseHeadingClearance(nodes: FlowNode[]): FlowNode[] {
+  const phases = nodes.filter((node) => node.data.schematicRole === 'phase' && node.data.label.trim());
+  if (!phases.length) return nodes;
+
+  return nodes.map((node) => {
+    if (['frame', 'phase'].includes(node.data.schematicRole ?? '')) return node;
+    const width = Number(node.style?.width ?? 1);
+    const height = Number(node.style?.height ?? 1);
+    const center = { x: node.position.x + width / 2, y: node.position.y + height / 2 };
+    const phase = phases.find((candidate) => {
+      const phaseWidth = Number(candidate.style?.width ?? 1);
+      const phaseHeight = Number(candidate.style?.height ?? 1);
+      return center.x >= candidate.position.x
+        && center.x <= candidate.position.x + phaseWidth
+        && center.y >= candidate.position.y
+        && center.y <= candidate.position.y + phaseHeight;
+    });
+    if (!phase) return node;
+
+    const phaseWidth = Number(phase.style?.width ?? 1);
+    const phaseHeight = Number(phase.style?.height ?? 1);
+    const layout = layoutSchematicNodeContent(phase.data, phaseWidth, phaseHeight);
+    const availableWidth = scientificNodeTextMaxWidth(phase.data, phaseWidth);
+    const measuredWidth = Math.max(...phase.data.label.split(/\r?\n/).map((line) => (
+      estimateSvgTextWidth(line.trim().split(/\s+/).filter(Boolean).join(' '), phase.data.fontSize)
+    )));
+    const heading = {
+      x: phase.position.x + scientificNodeTextPaddingX(phase.data) - 6,
+      y: phase.position.y + scientificNodeTextPaddingY(phase.data) - 6,
+      width: Math.min(availableWidth, measuredWidth) + 12,
+      height: layout.labelLines.length * phase.data.fontSize * 1.2 + 14,
+    };
+    const overlapsHorizontally = node.position.x < heading.x + heading.width
+      && node.position.x + width > heading.x;
+    const overlapsVertically = node.position.y < heading.y + heading.height
+      && node.position.y + height > heading.y;
+    if (!overlapsHorizontally || !overlapsVertically) return node;
+
+    const desiredY = heading.y + heading.height + 4;
+    const maximumY = phase.position.y + phaseHeight - height - 4;
+    if (desiredY > maximumY) return node;
+    return { ...node, position: { ...node.position, y: desiredY } };
+  });
+}
+
+function fitBlueprintToFigure(blueprint: Blueprint, spec: ScientificFigureSpec, layout: ScientificSchematicLayout): Blueprint {
+  const marginMm = Math.max(4, spec.marginMm);
+  const availableWidth = Math.max(1, mmToPx(spec.widthMm - marginMm * 2));
+  const availableHeight = Math.max(1, mmToPx(spec.heightMm - marginMm * 2));
+  const scale = Math.min(1, availableWidth / blueprint.width, availableHeight / blueprint.height);
+  const moduleMinimum = pointsToScientificUnits(layout === 'presentation' ? 11 : 7);
+  const annotationMinimum = pointsToScientificUnits(layout === 'presentation' ? 9 : 7);
+  const titleMinimum = pointsToScientificUnits(layout === 'presentation' ? 13 : 8);
+  const strokeMinimum = pointsToScientificUnits(layout === 'presentation' ? 1 : 0.8);
+  const scaledNodes = blueprint.nodes.map((node) => {
+    const role = node.data.schematicRole;
+    const minimumFontSize = role === 'frame'
+      ? titleMinimum
+      : role === 'annotation'
+        ? annotationMinimum
+        : moduleMinimum;
+    return {
+      ...node,
+      position: { x: node.position.x * scale, y: node.position.y * scale },
+      style: {
+        ...node.style,
+        width: Number(node.style?.width ?? 1) * scale,
+        height: Number(node.style?.height ?? 1) * scale,
+      },
+      data: {
+        ...node.data,
+        fontSize: Math.max(minimumFontSize, node.data.fontSize * scale),
+        borderWidth: Math.max(strokeMinimum, node.data.borderWidth * scale),
+      },
+    };
+  });
+  const nodes = preservePhaseHeadingClearance(scaledNodes);
+  const edges = blueprint.edges.map((edge) => {
+    const width = Math.max(strokeMinimum, (edge.data?.width ?? PUBLICATION_STROKES.secondary) * scale);
+    const labelFontSize = Math.max(annotationMinimum, Number(edge.data?.labelFontSize ?? PUBLICATION_TYPOGRAPHY.edgeLabel) * scale);
+    return {
+      ...edge,
+      data: {
+        ...edge.data!,
+        width,
+        labelFontSize,
+        routeOffset: edge.data?.routeOffset === undefined ? undefined : Math.max(12, edge.data.routeOffset * scale),
+      },
+      style: { ...edge.style, strokeWidth: width },
+    };
+  });
+  return { nodes, edges, width: blueprint.width * scale, height: blueprint.height * scale };
+}
+
 const BUILDERS: Record<ScientificSchematicTemplateId, (options: ScientificSchematicOptions, provenance: ScientificProvenance) => Blueprint> = {
   'multimodal-foundation': buildMultimodal,
   'vision-language-bridge': buildVisionLanguageBridge,
@@ -1003,19 +2291,51 @@ export function defaultScientificSchematicTitle(
   return language === 'zh' ? template.name : template.nameEn.replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
-export function createScientificSchematic(input: ScientificSchematicOptions): EditableScientificSchematic {
+export function defaultScientificSchematicBackbone(
+  templateId: ScientificSchematicTemplateId,
+  language: ScientificSchematicLanguage,
+): string {
+  return SCIENTIFIC_BACKBONE_DEFAULTS[templateId][language];
+}
+
+function resolveScientificDefault(
+  value: string,
+  expected: string,
+  knownDefaults: ReadonlySet<string>,
+): string {
+  const requested = value.trim();
+  return !requested || (knownDefaults.has(requested) && requested !== expected) ? expected : requested;
+}
+
+export function createScientificSchematic(
+  input: ScientificSchematicOptions,
+  targetFigure?: ScientificFigureSpec,
+): EditableScientificSchematic {
   const template = getScientificSchematicTemplate(input.templateId);
+  const layout = schematicLayoutForFigure(targetFigure);
+  const expectedTitle = defaultScientificSchematicTitle(input.templateId, input.language);
+  const expectedBackbone = defaultScientificSchematicBackbone(input.templateId, input.language);
+  const knownTitles = new Set(SCIENTIFIC_SCHEMATIC_TEMPLATES.flatMap((entry) => [
+    entry.name,
+    entry.nameEn.replace(/\b\w/g, (character) => character.toUpperCase()),
+  ]));
+  const knownBackbones = new Set(Object.values(SCIENTIFIC_BACKBONE_DEFAULTS).flatMap((entry) => [entry.en, entry.zh]));
   const options: ScientificSchematicOptions = {
     ...input,
-    title: input.title.trim() || defaultScientificSchematicTitle(input.templateId, input.language),
-    backbone: input.backbone.trim(),
+    title: resolveScientificDefault(input.title, expectedTitle, knownTitles),
+    backbone: resolveScientificDefault(input.backbone, expectedBackbone, knownBackbones),
   };
   const provenance: ScientificProvenance = {
     id: createId('provenance'),
     kind: 'scientific-schematic',
     sourceName: template.name,
     sourceFormat: 'Flowloom native schematic',
-    sourceData: JSON.stringify(options),
+    sourceData: JSON.stringify({
+      ...options,
+      layout,
+      targetWidthMm: targetFigure?.widthMm,
+      targetHeightMm: targetFigure?.heightMm,
+    }),
     engine: 'Flowloom schematic grammar 1',
     generatedAt: new Date().toISOString(),
     schematic: {
@@ -1026,20 +2346,37 @@ export function createScientificSchematic(input: ScientificSchematicOptions): Ed
       backbone: options.backbone || undefined,
       references: template.references.map((reference) => reference.arxivId),
       generatedBy: 'template',
+      layout,
+      targetWidthMm: targetFigure?.widthMm,
+      targetHeightMm: targetFigure?.heightMm,
     },
   };
-  const blueprint = BUILDERS[options.templateId](options, provenance);
+  const responsiveBlueprint = layout === 'single-column'
+    ? buildSingleColumnFlagship(options, provenance)
+    : layout === 'presentation'
+      ? buildTalkFlagship(options, provenance)
+      : layout === 'double-column'
+        ? buildPublicationDoubleFlagship(options, provenance)
+        : undefined;
+  const sourceBlueprint = responsiveBlueprint ?? BUILDERS[options.templateId](options, provenance);
   const allowedRank = densityRank(options.density);
-  const nodes = blueprint.nodes.filter((node) => densityRank(node.data.schematicDetail ?? 'compact') <= allowedRank);
+  const nodes = sourceBlueprint.nodes.filter((node) => densityRank(node.data.schematicDetail ?? 'compact') <= allowedRank);
   const ids = new Set(nodes.map((node) => node.id));
-  const graph = normalizeGraph(nodes, blueprint.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)));
+  const graph = normalizeGraph(nodes, sourceBlueprint.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)));
+  const blueprint = targetFigure
+    ? fitBlueprintToFigure({ ...sourceBlueprint, nodes: graph.nodes, edges: graph.edges }, targetFigure, layout)
+    : { ...sourceBlueprint, nodes: graph.nodes, edges: graph.edges };
+  const edges = finalizeScientificEdges(blueprint.nodes, blueprint.edges);
   return {
     title: options.title,
     templateId: options.templateId,
-    nodes: graph.nodes.map((node) => ({ ...node, selected: false })),
-    edges: graph.edges.map((edge) => ({ ...edge, selected: false })),
+    nodes: blueprint.nodes.map((node) => ({ ...node, selected: false })),
+    edges: edges.map((edge) => ({ ...edge, selected: false })),
     width: blueprint.width,
     height: blueprint.height,
     references: template.references,
+    layout,
+    targetWidthMm: targetFigure?.widthMm,
+    targetHeightMm: targetFigure?.heightMm,
   };
 }

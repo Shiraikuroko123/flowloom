@@ -869,6 +869,7 @@ export async function importDiagramFile(file: File): Promise<ImportResult> {
       ...node,
       data: { ...node.data, layerId: editableLayerId },
     }));
+    const edges = parsed.edges;
     let layers: DiagramPage['layers'] = [{ id: editableLayerId, name: '可编辑图元', visible: true, locked: false }];
     if (parsed.unsupportedCount > 0) {
       const referenceLayerId = createId('svg-reference-layer');
@@ -897,8 +898,8 @@ export async function importDiagramFile(file: File): Promise<ImportResult> {
     return {
       title,
       nodes,
-      edges: [],
-      pages: [{ id: pageId, name: title, nodes, edges: [], layers }],
+      edges,
+      pages: [{ id: pageId, name: title, nodes, edges, layers }],
       activePageId: pageId,
       fidelity: parsed.unsupportedCount > 0 ? 'hybrid' : 'structural',
       sourceFormat: 'SVG',

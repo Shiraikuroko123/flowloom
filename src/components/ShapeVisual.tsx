@@ -1,5 +1,5 @@
-import { memo, type ReactNode } from 'react';
-import type { ShapeKind } from '../types';
+import { memo, type CSSProperties, type ReactNode } from 'react';
+import type { ScientificVisualVariant, ShapeKind } from '../types';
 
 interface ShapeVisualProps {
   kind: ShapeKind;
@@ -12,6 +12,8 @@ interface ShapeVisualProps {
   y?: number | string;
   width?: number | string;
   height?: number | string;
+  variant?: ScientificVisualVariant;
+  style?: CSSProperties;
 }
 
 interface PrimitiveProps {
@@ -45,6 +47,8 @@ function ShapeVisualComponent({
   y,
   width,
   height,
+  variant = 'default',
+  style,
 }: ShapeVisualProps) {
   const outline = geometryProps(fill, stroke, strokeWidth);
   const detail = geometryProps('none', stroke, strokeWidth);
@@ -545,12 +549,29 @@ function ShapeVisualComponent({
           <rect x="3" y="4" width="94" height="76" rx="4" {...outline} />
           <circle cx="74" cy="25" r="8" {...detail} />
           <path d="M8 70L31 43L45 57L58 39L92 70ZM8 70H92" {...detail} />
-          <path d="M8 86H38M62 86H92" {...detail} />
         </>
       );
       break;
     case 'scientific-token-strip':
-      geometry = (
+      geometry = variant === 'state-vector' ? (
+        <>
+          <rect x="2" y="10" width="96" height="57" rx="7" {...outline} />
+          {[[8, 25], [30, 21], [52, 27], [74, 23]].map(([tokenX, tokenY], index) => (
+            <g key={tokenX}>
+              <rect x={Number(tokenX)} y={Number(tokenY)} width="17" height={40 - (Number(tokenY) - 20)} rx="3" {...detail} />
+              <circle cx={Number(tokenX) + 8.5} cy={index % 2 ? 33 : 38} r="2.6" fill={stroke} fillOpacity={0.24 + index * 0.11} stroke="none" />
+            </g>
+          ))}
+          <path d="M8 76H89M84 71L90 76L84 81" {...detail} />
+        </>
+      ) : variant === 'telemetry' ? (
+        <>
+          <rect x="2" y="10" width="96" height="57" rx="7" {...outline} />
+          <path d="M10 52H90M10 52V19M11 44C22 41 28 28 38 34S55 47 64 29S79 24 89 20" {...detail} />
+          {[18, 34, 50, 66, 82].map((tokenX, index) => <circle key={tokenX} cx={tokenX} cy={[41, 35, 43, 29, 23][index]} r="3" fill={stroke} fillOpacity={index === 4 ? 0.68 : 0.2} stroke={stroke} strokeWidth={strokeWidth * 0.7} />)}
+          <path d="M8 76H89M84 71L90 76L84 81" {...detail} />
+        </>
+      ) : (
         <>
           <rect x="2" y="10" width="96" height="57" rx="7" {...outline} />
           {[7, 22, 37, 52, 67, 82].map((tokenX, index) => (
@@ -561,7 +582,47 @@ function ShapeVisualComponent({
       );
       break;
     case 'scientific-transformer':
-      geometry = (
+      geometry = variant === 'vlm' ? (
+        <>
+          <rect x="4" y="3" width="92" height="84" rx="7" {...outline} />
+          {[0, 1, 2].map((index) => (
+            <g key={index}>
+              <rect x={12 + index * 27} y="11" width="20" height="14" rx="3" fill={stroke} fillOpacity={0.12 + index * 0.08} stroke={stroke} strokeWidth={strokeWidth * 0.75} />
+              {index === 0 && <circle cx="22" cy="18" r="3" fill={stroke} fillOpacity="0.58" stroke="none" />}
+              {index === 1 && <path d="M42 17H58M42 21H53" {...detail} />}
+              {index === 2 && <path d="M78 14L83 18L78 22L73 18Z" fill={stroke} fillOpacity="0.35" stroke={stroke} strokeWidth={strokeWidth * 0.6} />}
+            </g>
+          ))}
+          <rect x="13" y="34" width="74" height="19" rx="3" {...detail} />
+          <path d="M22 43H78M31 37V50M50 37V50M69 37V50" opacity="0.55" {...detail} />
+          <rect x="13" y="63" width="74" height="15" rx="3" {...detail} />
+          <path d="M22 68H78M22 73H66" opacity="0.65" {...detail} />
+          <path d="M22 25V34M50 25V34M78 25V34M50 53V63" {...detail} />
+        </>
+      ) : variant === 'world-model' ? (
+        <>
+          <rect x="4" y="3" width="92" height="84" rx="7" {...outline} />
+          <circle cx="19" cy="28" r="10" fill={stroke} fillOpacity="0.12" stroke={stroke} strokeWidth={strokeWidth} />
+          <circle cx="19" cy="28" r="3" fill={stroke} fillOpacity="0.5" stroke="none" />
+          <rect x="39" y="15" width="31" height="26" rx="5" {...detail} />
+          <path d="M46 23H63M46 29H63M46 35H58" {...detail} />
+          <circle cx="83" cy="28" r="10" fill={stroke} fillOpacity="0.26" stroke={stroke} strokeWidth={strokeWidth} strokeDasharray="3 2" />
+          <circle cx="83" cy="28" r="4" fill={stroke} fillOpacity="0.62" stroke="none" />
+          <path d="M29 28H39M70 28H73M35 64H70M65 59L71 64L65 69" {...detail} />
+          <rect x="12" y="55" width="20" height="18" rx="4" {...detail} />
+          <path d="M17 64H27M22 59V69" {...detail} />
+          <path d="M32 64V39H43" strokeDasharray="3 3" {...detail} />
+        </>
+      ) : ['base-model', 'aligned-model', 'checkpoint'].includes(variant) ? (
+        <>
+          <rect x="5" y="3" width="90" height="82" rx="7" {...outline} />
+          {[13, 34, 55].map((rowY, index) => <rect key={rowY} x="15" y={rowY} width="70" height="14" rx="3" fill={stroke} fillOpacity={0.08 + index * 0.07} stroke={stroke} strokeWidth={strokeWidth * 0.75} />)}
+          <path d="M50 27V34M50 48V55" {...detail} />
+          {variant === 'base-model' && <circle cx="80" cy="75" r="5" fill={stroke} fillOpacity="0.18" stroke={stroke} strokeWidth={strokeWidth * 0.75} />}
+          {variant === 'aligned-model' && <><path d="M71 78L79 70L87 75" {...heavy} /><circle cx="20" cy="75" r="5" fill={stroke} fillOpacity="0.42" stroke="none" /></>}
+          {variant === 'checkpoint' && <><circle cx="79" cy="75" r="9" fill={fill} stroke={stroke} strokeWidth={strokeWidth} /><path d="M74 75L78 79L85 71" {...heavy} /></>}
+        </>
+      ) : (
         <>
           <rect x="5" y="3" width="90" height="82" rx="7" {...outline} />
           <rect x="15" y="12" width="70" height="16" rx="3" {...detail} />
@@ -574,13 +635,21 @@ function ShapeVisualComponent({
       );
       break;
     case 'scientific-layer-stack':
-      geometry = (
+      geometry = variant === 'diffusion-action' ? (
+        <>
+          <rect x="4" y="6" width="92" height="76" rx="6" {...outline} />
+          {[16, 28, 40, 52, 64].map((pointX, index) => <circle key={pointX} cx={pointX} cy={25 + ((index * 13) % 28)} r={index < 2 ? 4.5 : 3} fill={stroke} fillOpacity={0.12 + index * 0.07} stroke={stroke} strokeWidth={strokeWidth * 0.65} />)}
+          <path d="M12 61C27 48 35 58 48 43S69 31 87 20" strokeDasharray="3 4" opacity="0.55" {...detail} />
+          <path d="M12 69C28 60 41 61 54 48S74 34 89 29" {...heavy} />
+          <path d="M82 24L90 29L83 35" {...detail} />
+        </>
+      ) : (
         <>
           <rect x="24" y="5" width="70" height="62" rx="5" {...detail} />
           <rect x="15" y="13" width="70" height="62" rx="5" {...detail} />
           <rect x="6" y="21" width="70" height="62" rx="5" {...outline} />
           <path d="M17 36H65M17 49H65M17 62H65" {...detail} />
-          <text x="84" y="39" fill={stroke} stroke="none" fontSize="10" fontWeight="700">N×</text>
+          <circle cx="86" cy="34" r="2" fill={stroke} stroke="none" /><circle cx="86" cy="42" r="2" fill={stroke} stroke="none" /><circle cx="86" cy="50" r="2" fill={stroke} stroke="none" />
         </>
       );
       break;
@@ -687,9 +756,6 @@ function ShapeVisualComponent({
         <>
           <circle cx="35" cy="68" r="4" fill={stroke} stroke="none" />
           <path d="M35 68L85 68M35 68L35 17M35 68L12 88M79 63L87 68L79 73M30 23L35 15L40 23M17 78L10 90L23 86" {...heavy} />
-          <text x="88" y="72" fill={stroke} stroke="none" fontSize="11" fontWeight="700">x</text>
-          <text x="31" y="13" fill={stroke} stroke="none" fontSize="11" fontWeight="700">y</text>
-          <text x="5" y="94" fill={stroke} stroke="none" fontSize="11" fontWeight="700">z</text>
         </>
       );
       break;
@@ -718,7 +784,18 @@ function ShapeVisualComponent({
       );
       break;
     case 'scientific-action-chunk':
-      geometry = (
+      geometry = variant === 'action-horizon' ? (
+        <>
+          <rect x="2" y="12" width="96" height="55" rx="9" {...outline} />
+          {[8, 21, 34, 47, 60, 73, 86].map((actionX, index) => (
+            <g key={actionX}>
+              <rect x={actionX} y={18 + (index % 3) * 4} width="9" height={36 - (index % 3) * 5} rx="3" fill={stroke} fillOpacity={0.1 + index * 0.055} stroke={stroke} strokeWidth={strokeWidth * 0.75} />
+              <circle cx={actionX + 4.5} cy={57 - (index % 2) * 5} r="1.6" fill={stroke} stroke="none" />
+            </g>
+          ))}
+          <path d="M8 76H91M85 71L92 76L85 81M8 87V82M92 87V82M8 85H92" {...detail} />
+        </>
+      ) : (
         <>
           <rect x="2" y="12" width="96" height="55" rx="9" {...outline} />
           {[8, 21, 34, 47, 60, 73, 86].map((actionX, index) => (
@@ -729,13 +806,354 @@ function ShapeVisualComponent({
       );
       break;
     case 'scientific-loss-target':
-      geometry = (
+      geometry = variant === 'next-token' ? (
+        <>
+          <rect x="4" y="9" width="92" height="68" rx="7" {...outline} />
+          {[11, 28, 45].map((tokenX) => <rect key={tokenX} x={tokenX} y="24" width="13" height="22" rx="3" {...detail} />)}
+          <path d="M59 35H73M68 30L74 35L68 40" {...detail} />
+          <rect x="77" y="20" width="13" height="30" rx="3" fill={stroke} fillOpacity="0.24" stroke={stroke} strokeWidth={strokeWidth} />
+        </>
+      ) : variant === 'preference-objective' ? (
+        <>
+          <rect x="5" y="11" width="38" height="54" rx="5" {...outline} />
+          <rect x="57" y="11" width="38" height="54" rx="5" {...outline} />
+          <path d="M14 27H34M14 37H31M66 27H86M66 37H83" {...detail} />
+          <path d="M45 38H55M51 33L56 38L51 43" {...heavy} />
+          <path d="M20 53L24 57L30 49M70 49L82 61M82 49L70 61" {...detail} />
+        </>
+      ) : (
         <>
           <circle cx="48" cy="42" r="34" {...outline} />
           <circle cx="48" cy="42" r="22" {...detail} />
           <circle cx="48" cy="42" r="9" {...detail} />
           <path d="M80 10L58 32M72 9H81V18" {...heavy} />
           <path d="M17 84H82" {...detail} />
+        </>
+      );
+      break;
+    case 'scientific-scene-frame':
+      geometry = variant === 'multiview' ? (
+        <>
+          <rect x="2" y="4" width="96" height="77" rx="4" {...outline} />
+          <rect x="7" y="10" width="40" height="57" rx="3" {...detail} />
+          <rect x="53" y="10" width="40" height="57" rx="3" {...detail} />
+          <path d="M10 58L20 45H44M56 58L67 43H90M21 54L25 38L34 33L39 21M65 55L69 42L78 36L84 23" {...detail} />
+          <circle cx="21" cy="54" r="3.5" {...detail} />
+          <circle cx="25" cy="38" r="3" {...detail} />
+          <circle cx="65" cy="55" r="3.5" {...detail} />
+          <circle cx="69" cy="42" r="3" {...detail} />
+          <rect x="34" y="49" width="7" height="7" rx="1" fill={stroke} fillOpacity="0.2" stroke={stroke} strokeWidth={strokeWidth * 0.7} />
+          <circle cx="82" cy="51" r="4" fill={stroke} fillOpacity="0.18" stroke={stroke} strokeWidth={strokeWidth * 0.7} />
+        </>
+      ) : ['success', 'collision', 'uncertain'].includes(variant) ? (
+        <>
+          {[3, 35, 67].map((frameX, index) => (
+            <g key={frameX}>
+              <rect x={frameX} y="10" width="29" height="61" rx="3" fill={fill} stroke={stroke} strokeWidth={strokeWidth * 0.8} strokeDasharray={variant === 'uncertain' && index > 0 ? '3 3' : undefined} />
+              <path d={`M${frameX + 3} 61L${frameX + 10} 48H${frameX + 26}`} opacity="0.42" {...detail} />
+              <path d={`M${frameX + 8} 55L${frameX + 11} ${43 - index * 3}L${frameX + 18} ${37 - index * 4}L${frameX + 23} ${27 + index * 2}`} {...detail} />
+              <circle cx={frameX + 8} cy="55" r="2.6" fill={fill} stroke={stroke} strokeWidth={strokeWidth * 0.8} />
+              <rect x={frameX + 19} y="53" width="5" height="5" rx="1" fill={stroke} fillOpacity="0.18" stroke={stroke} strokeWidth={strokeWidth * 0.65} />
+              <circle cx={frameX + 14.5} cy="81" r={index + 1.4} fill={stroke} fillOpacity={0.16 + index * 0.14} stroke="none" />
+            </g>
+          ))}
+          {variant === 'success' && <><circle cx="88" cy="18" r="7" fill={fill} stroke={stroke} strokeWidth={strokeWidth} /><path d="M84 18L87 21L92 15" {...heavy} /></>}
+          {variant === 'collision' && <><path d="M84 13L87 18L93 16L90 22L95 26L88 26L86 32L82 27L76 30L79 23L74 19L81 18Z" fill={stroke} fillOpacity="0.2" stroke={stroke} strokeWidth={strokeWidth * 0.75} /><path d="M80 16L92 28M92 16L80 28" {...detail} /></>}
+          {variant === 'uncertain' && <><path d="M70 48C76 31 84 42 92 24M70 55C78 48 84 29 93 38" strokeDasharray="3 3" opacity="0.55" {...detail} /><circle cx="87" cy="18" r="6" fill="none" stroke={stroke} strokeWidth={strokeWidth} strokeDasharray="2 2" /></>}
+        </>
+      ) : variant === 'execution' ? (
+        <>
+          <rect x="3" y="4" width="94" height="76" rx="4" {...outline} />
+          <path d="M8 69L27 46H92M27 46V69M49 46V69M71 46V69M12 58H94" opacity="0.42" {...detail} />
+          <path d="M17 63L23 48L39 42L53 25" {...heavy} />
+          <circle cx="17" cy="63" r="5" {...outline} />
+          <circle cx="24" cy="48" r="4" {...outline} />
+          <circle cx="40" cy="41" r="4" {...outline} />
+          <path d="M58 24L68 18M58 28L69 33" {...detail} />
+          <circle cx="78" cy="54" r="6" fill={stroke} fillOpacity="0.16" stroke={stroke} strokeWidth={strokeWidth} />
+          <path d="M55 30C62 37 64 49 74 53M68 48L75 54L68 58" strokeDasharray="4 3" {...detail} />
+        </>
+      ) : (
+        <>
+          <rect x="3" y="4" width="94" height="76" rx="4" {...outline} />
+          <path d="M8 69L27 46H88L94 69ZM27 46V69M47 46V69M68 46V69M16 58H92" opacity="0.45" {...detail} />
+          <path d="M15 29L34 19L39 37Z" {...detail} fill={stroke} fillOpacity="0.08" />
+          <circle cx="15" cy="29" r="4" {...detail} />
+          <path d="M55 61L59 46L70 39L77 25" {...heavy} />
+          <circle cx="55" cy="61" r="5" {...outline} />
+          <circle cx="60" cy="45" r="4" {...outline} />
+          <circle cx="71" cy="38" r="4" {...outline} />
+          <path d="M81 23L89 18M81 27L90 31" {...detail} />
+          <circle cx="39" cy="58" r="5" fill={stroke} fillOpacity="0.22" stroke={stroke} strokeWidth={strokeWidth} />
+          <rect x="75" y="55" width="10" height="9" rx="2" fill={stroke} fillOpacity="0.12" stroke={stroke} strokeWidth={strokeWidth} />
+        </>
+      );
+      break;
+    case 'scientific-feature-map':
+      geometry = (
+        <>
+          <rect x="24" y="7" width="68" height="66" rx="3" fill={fill} stroke={stroke} strokeWidth={strokeWidth} opacity="0.45" />
+          <rect x="14" y="16" width="68" height="66" rx="3" fill={fill} stroke={stroke} strokeWidth={strokeWidth} opacity="0.7" />
+          <rect x="4" y="25" width="68" height="66" rx="3" {...outline} />
+          {[0, 1, 2, 3].flatMap((row) => [0, 1, 2, 3].map((column) => (
+            <rect
+              key={`${row}-${column}`}
+              x={10 + column * 14}
+              y={31 + row * 13}
+              width="10"
+              height="9"
+              rx="1"
+              fill={stroke}
+              fillOpacity={0.08 + ((row * 3 + column * 5) % 7) * 0.055}
+              stroke="none"
+            />
+          )))}
+          <path d="M76 32H91M86 27L92 32L86 37" {...detail} />
+        </>
+      );
+      break;
+    case 'scientific-attention-map':
+      geometry = (
+        <>
+          <rect x="8" y="7" width="78" height="78" rx="3" {...outline} />
+          {[0, 1, 2, 3, 4, 5].flatMap((row) => [0, 1, 2, 3, 4, 5].map((column) => {
+            const distance = Math.abs(row - column);
+            const opacity = distance === 0 ? 0.68 : distance === 1 ? 0.34 : ((row + column) % 5 === 0 ? 0.22 : 0.06);
+            return <rect key={`${row}-${column}`} x={13 + column * 11.5} y={12 + row * 11.5} width="9" height="9" rx="1" fill={stroke} fillOpacity={opacity} stroke="none" />;
+          }))}
+          <path d="M91 17V76M88 21L91 16L94 21M88 72L91 77L94 72" {...detail} />
+        </>
+      );
+      break;
+    case 'scientific-embedding-space':
+      geometry = (
+        <>
+          <path d="M17 76H90M17 76V13" {...detail} />
+          <path d="M84 72L91 76L84 80M13 19L17 12L21 19" {...detail} />
+          {[
+            [33, 54, 6, 0.28], [40, 45, 5, 0.48], [28, 40, 4, 0.62], [46, 58, 4, 0.36],
+            [67, 30, 6, 0.62], [76, 37, 4, 0.38], [72, 20, 4, 0.5], [82, 27, 3, 0.28],
+          ].map(([cx, cy, r, opacity], index) => <circle key={index} cx={cx} cy={cy} r={r} fill={stroke} fillOpacity={opacity} stroke={stroke} strokeWidth={strokeWidth * 0.7} />)}
+          <path d="M23 63C36 29 48 73 59 48S78 12 88 22" strokeDasharray="3 4" opacity="0.7" {...detail} />
+        </>
+      );
+      break;
+    case 'scientific-probability-bars':
+      geometry = (
+        <>
+          <path d="M12 75H92M12 75V14" {...detail} />
+          {[22, 37, 52, 67, 82].map((barX, index) => {
+            const heights = [18, 34, 55, 43, 25];
+            return <rect key={barX} x={barX - 5} y={75 - heights[index]} width="10" height={heights[index]} rx="2" fill={stroke} fillOpacity={index === 2 ? 0.68 : 0.18 + index * 0.06} stroke={stroke} strokeWidth={strokeWidth * 0.65} />;
+          })}
+          <path d="M17 31C32 27 48 19 61 24S78 42 89 47" strokeDasharray="4 3" {...detail} />
+        </>
+      );
+      break;
+    case 'scientific-uncertainty-band':
+      geometry = (
+        <>
+          <path d="M10 77H93M10 77V13" {...detail} />
+          <path d="M13 63C27 51 36 58 48 43S68 27 91 20L91 42C70 45 61 53 49 61S28 69 13 73Z" fill={stroke} fillOpacity="0.14" stroke="none" />
+          <path d="M13 68C27 58 36 63 49 52S69 35 91 30" {...heavy} />
+          {[13, 33, 53, 73, 91].map((pointX, index) => <line key={pointX} x1={pointX} y1={[59, 54, 44, 30, 20][index]} x2={pointX} y2={[74, 69, 62, 50, 42][index]} opacity="0.65" {...detail} />)}
+        </>
+      );
+      break;
+    case 'scientific-metric-panel':
+      geometry = variant === 'capability-safety' ? (
+        <>
+          <rect x="3" y="8" width="94" height="72" rx="5" {...outline} />
+          <path d="M10 66H46M10 66V22M55 66H91M55 66V22M10 48H46M55 48H91" strokeDasharray="2 3" opacity="0.45" {...detail} />
+          <path d="M12 60C20 58 24 46 31 49S39 36 44 28M57 33C65 37 69 46 76 44S84 57 89 61" {...heavy} />
+          <path d="M12 55C20 49 27 52 34 40S40 34 44 36M57 29C64 32 70 37 76 34S84 44 89 49" strokeDasharray="4 3" {...detail} />
+          <path d="M40 31L44 25L47 31M84 55L89 61L92 54" {...detail} />
+        </>
+      ) : variant === 'prediction-error' ? (
+        <>
+          <rect x="3" y="8" width="94" height="72" rx="5" {...outline} />
+          <path d="M12 68H91M12 68V18M12 51H91M12 34H91" strokeDasharray="2 3" opacity="0.45" {...detail} />
+          <path d="M14 58C25 43 32 49 43 35S63 30 74 24S84 27 90 20" {...heavy} />
+          <path d="M14 61C25 51 33 54 44 43S64 34 75 32S85 29 90 31" strokeDasharray="5 3" {...detail} />
+          <path d="M44 43V35M75 32V24" opacity="0.55" {...detail} />
+          <circle cx="44" cy="39" r="3" fill={stroke} fillOpacity="0.22" stroke={stroke} strokeWidth={strokeWidth * 0.65} /><circle cx="75" cy="28" r="3" fill={stroke} fillOpacity="0.22" stroke={stroke} strokeWidth={strokeWidth * 0.65} />
+        </>
+      ) : (
+        <>
+          <rect x="3" y="8" width="94" height="72" rx="5" {...outline} />
+          <path d="M34 8V80M66 8V80M3 28H97" {...detail} />
+          <circle cx="15" cy="18" r="3" fill={stroke} fillOpacity="0.62" stroke="none" />
+          <circle cx="46" cy="18" r="3" fill={stroke} fillOpacity="0.38" stroke="none" />
+          <circle cx="78" cy="18" r="3" fill={stroke} fillOpacity="0.22" stroke="none" />
+          <rect x="12" y="42" width="12" height="24" rx="2" fill={stroke} fillOpacity="0.24" stroke="none" /><rect x="44" y="34" width="12" height="32" rx="2" fill={stroke} fillOpacity="0.42" stroke="none" /><rect x="76" y="25" width="12" height="41" rx="2" fill={stroke} fillOpacity="0.62" stroke="none" />
+        </>
+      );
+      break;
+    case 'scientific-ablation-table':
+      geometry = (
+        <>
+          <rect x="4" y="7" width="92" height="76" rx="3" {...outline} />
+          <path d="M4 27H96M4 46H96M4 65H96M39 7V83M65 7V83M82 7V83" {...detail} />
+          <path d="M47 37L52 42L60 32M47 56L52 61L60 51M47 75L52 80L60 70" {...heavy} />
+          <rect x="70" y="33" width="8" height="7" rx="1" fill={stroke} fillOpacity="0.22" stroke="none" />
+          <rect x="70" y="52" width="8" height="7" rx="1" fill={stroke} fillOpacity="0.46" stroke="none" />
+          <rect x="70" y="71" width="8" height="7" rx="1" fill={stroke} fillOpacity="0.68" stroke="none" />
+          <path d="M9 17H31M9 36H29M9 55H24M9 74H32M7 91H35M65 91H94" {...detail} />
+        </>
+      );
+      break;
+    case 'scientific-decision-gate':
+      geometry = variant === 'risk-ranking' ? (
+        <>
+          <rect x="4" y="7" width="92" height="76" rx="5" {...outline} />
+          {[
+            [20, 63], [43, 42], [66, 25],
+          ].map(([rowY, barWidth], index) => (
+            <g key={String(rowY)}>
+              <circle cx="16" cy={Number(rowY)} r="5" fill={index === 0 ? stroke : fill} fillOpacity={index === 0 ? 0.62 : 1} stroke={stroke} strokeWidth={strokeWidth} />
+              <rect x="28" y={Number(rowY) - 5} width={Number(barWidth)} height="10" rx="3" fill={stroke} fillOpacity={index === 0 ? 0.58 : index === 1 ? 0.3 : 0.16} stroke="none" />
+              <circle cx="89" cy={Number(rowY)} r={3 + index} fill={stroke} fillOpacity={0.2 + index * 0.14} stroke="none" />
+            </g>
+          ))}
+          <path d="M12 20L15 23L21 16" stroke={fill} strokeWidth={Math.max(1.2, strokeWidth)} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      ) : (
+        <>
+          <rect x="4" y="7" width="92" height="76" rx="5" {...outline} />
+          {[20, 43, 66].map((rowY, index) => (
+            <g key={rowY}>
+              <circle cx="16" cy={rowY} r="5" fill={index === 0 ? stroke : fill} fillOpacity={index === 0 ? 0.62 : 1} stroke={stroke} strokeWidth={strokeWidth} />
+              <rect x="28" y={rowY - 5} width={index === 0 ? 54 : index === 1 ? 38 : 25} height="10" rx="3" fill={stroke} fillOpacity={index === 0 ? 0.58 : index === 1 ? 0.3 : 0.16} stroke="none" />
+            </g>
+          ))}
+        </>
+      );
+      break;
+    case 'scientific-prompt-card':
+      geometry = (
+        <>
+          <path d="M5 9H95V72H31L19 84L21 72H5Z" {...outline} />
+          <circle cx="18" cy="24" r="5" fill={stroke} fillOpacity="0.3" stroke={stroke} strokeWidth={strokeWidth} />
+          <path d="M30 21H84M30 29H72M14 44H86M14 53H78M14 62H58" {...detail} />
+          <rect x="67" y="48" width="19" height="13" rx="3" fill={stroke} fillOpacity="0.14" stroke={stroke} strokeWidth={strokeWidth * 0.75} />
+        </>
+      );
+      break;
+    case 'scientific-preference-pair':
+      geometry = (
+        <>
+          <rect x="4" y="10" width="42" height="67" rx="5" {...outline} />
+          <rect x="54" y="10" width="42" height="67" rx="5" {...outline} />
+          <path d="M13 27H37M13 38H34M13 49H38M63 27H87M63 38H84M63 49H88" {...detail} />
+          <circle cx="25" cy="64" r="8" fill={stroke} fillOpacity="0.12" stroke={stroke} strokeWidth={strokeWidth} />
+          <path d="M21 64L24 67L30 60" {...heavy} />
+          <circle cx="75" cy="64" r="8" fill={stroke} fillOpacity="0.05" stroke={stroke} strokeWidth={strokeWidth} />
+          <path d="M71 60L79 68M79 60L71 68" {...detail} />
+        </>
+      );
+      break;
+    case 'scientific-data-funnel':
+      geometry = (
+        <>
+          <path d="M7 9H93L66 44V70L53 88H43L34 70V44Z" {...outline} />
+          <path d="M16 24H84M26 36H74M35 48H65M39 61H61" {...detail} />
+          {[20, 31, 42, 53, 64, 75].map((pointX, index) => <circle key={pointX} cx={pointX} cy={17 + (index % 2) * 5} r="2.5" fill={stroke} fillOpacity={0.18 + index * 0.07} stroke="none" />)}
+          <path d="M45 79H55M45 84H55" {...heavy} />
+        </>
+      );
+      break;
+    case 'scientific-legend':
+      geometry = (
+        <>
+          <rect x="3" y="6" width="94" height="76" rx="5" {...outline} />
+          <rect x="11" y="17" width="22" height="17" rx="3" fill={stroke} fillOpacity="0.22" stroke={stroke} strokeWidth={strokeWidth * 0.8} />
+          <rect x="11" y="51" width="22" height="17" rx="3" fill={fill} stroke={stroke} strokeWidth={strokeWidth * 0.8} strokeDasharray="4 3" />
+          <path d="M43 25H86M79 19L87 25L79 31" {...heavy} />
+          <path d="M43 59H86M79 53L87 59L79 65" strokeDasharray="5 4" {...detail} />
+          <circle cx="43" cy="25" r="3" fill={stroke} stroke="none" /><circle cx="43" cy="59" r="3" fill={fill} stroke={stroke} strokeWidth={strokeWidth * 0.75} />
+        </>
+      );
+      break;
+    case 'scientific-equation':
+      geometry = (
+        <>
+          <path d="M15 13H8V87H15M85 13H92V87H85" {...heavy} />
+        </>
+      );
+      break;
+    case 'scientific-tensor':
+      geometry = (
+        <>
+          <path d="M18 24L68 10L91 28L40 43ZM18 24V69L40 88V43M40 43L91 28V72L40 88" {...outline} />
+          <path d="M34 20L56 38M50 15L72 33M18 39L40 57L91 42M18 54L40 72L91 57M57 38V83M74 33V78" opacity="0.62" {...detail} />
+          <path d="M12 24V69M8 29L12 23L16 29M8 64L12 70L16 64M40 92H91M45 88L39 92L45 96M86 88L92 92L86 96" {...detail} />
+        </>
+      );
+      break;
+    case 'scientific-zoom-inset':
+      geometry = (
+        <>
+          <rect x="4" y="12" width="50" height="60" rx="3" {...outline} />
+          <rect x="17" y="28" width="20" height="20" rx="2" fill={stroke} fillOpacity="0.08" stroke={stroke} strokeWidth={strokeWidth} strokeDasharray="3 2" />
+          <rect x="65" y="6" width="31" height="76" rx="4" {...outline} />
+          <path d="M37 28L65 12M37 48L65 76" strokeDasharray="4 3" {...detail} />
+          <path d="M70 62C75 31 83 55 90 20" {...heavy} />
+          <circle cx="82" cy="39" r="6" fill={stroke} fillOpacity="0.16" stroke={stroke} strokeWidth={strokeWidth} />
+        </>
+      );
+      break;
+    case 'scientific-task-object':
+      geometry = variant === 'object-cylinder' ? (
+        <>
+          <path d="M24 24C24 13 76 13 76 24V69C76 80 24 80 24 69Z" {...outline} />
+          <ellipse cx="50" cy="24" rx="26" ry="10" {...detail} />
+          <path d="M24 52C24 63 76 63 76 52" opacity="0.48" {...detail} />
+          <path d="M33 33V63M40 31V65" opacity="0.28" {...detail} />
+          <circle cx="67" cy="36" r="5" fill={stroke} fillOpacity="0.22" stroke={stroke} strokeWidth={strokeWidth * 0.75} />
+        </>
+      ) : (
+        <>
+          <path d="M50 10L84 28L50 47L16 28ZM16 28V69L50 89V47M50 47L84 28V69L50 89" {...outline} />
+          <path d="M50 10V47M33 19L67 37M67 19L33 37" opacity="0.46" {...detail} />
+          <path d="M23 38L43 50V76M77 38L57 50V76" opacity="0.28" {...detail} />
+          <circle cx="68" cy="56" r="5" fill={stroke} fillOpacity="0.22" stroke={stroke} strokeWidth={strokeWidth * 0.75} />
+        </>
+      );
+      break;
+    case 'scientific-goal-region':
+      geometry = (
+        <>
+          <rect x="7" y="14" width="86" height="66" rx="8" fill={fill} fillOpacity="0.36" stroke={stroke} strokeWidth={strokeWidth} strokeDasharray="6 4" />
+          <rect x="23" y="28" width="54" height="38" rx="5" fill="none" stroke={stroke} strokeWidth={strokeWidth} strokeDasharray="3 3" opacity="0.62" />
+          <circle cx="50" cy="47" r="12" fill={stroke} fillOpacity="0.1" stroke={stroke} strokeWidth={strokeWidth} />
+          <path d="M50 30V64M33 47H67M50 7V18M45 12L50 6L55 12M50 87V76M45 82L50 88L55 82" {...detail} />
+        </>
+      );
+      break;
+    case 'scientific-contact-point':
+      geometry = (
+        <>
+          <path d="M12 29L39 42L34 53L9 43ZM88 29L61 42L66 53L91 43Z" {...outline} />
+          <circle cx="50" cy="48" r="8" fill={stroke} fillOpacity="0.22" stroke={stroke} strokeWidth={strokeWidth} />
+          <circle cx="50" cy="48" r="2.8" fill={stroke} stroke="none" />
+          <path d="M50 17V35M45 25L50 16L55 25M26 68L40 56M31 58L25 69L37 65M74 68L60 56M69 58L75 69L63 65" {...heavy} />
+          <path d="M19 20L25 26M81 20L75 26M45 76H55" strokeDasharray="3 3" {...detail} />
+        </>
+      );
+      break;
+    case 'scientific-release-gate':
+      geometry = (
+        <>
+          <rect x="4" y="8" width="92" height="74" rx="6" {...outline} />
+          {[24, 43, 62].map((rowY, index) => (
+            <g key={rowY}>
+              <circle cx="17" cy={rowY} r="5" fill={index === 2 ? fill : stroke} fillOpacity={index === 2 ? 1 : 0.18 + index * 0.12} stroke={stroke} strokeWidth={strokeWidth} />
+              <path d={`M14 ${rowY}L17 ${rowY + 3}L22 ${rowY - 4}`} {...detail} />
+              <rect x="29" y={rowY - 4} width={index === 0 ? 35 : index === 1 ? 46 : 28} height="8" rx="3" fill={stroke} fillOpacity={0.18 + index * 0.1} stroke="none" />
+            </g>
+          ))}
+          <path d="M79 17V72M73 17H85M73 72H85M79 44H92M87 39L93 44L87 49" {...heavy} />
+          <path d="M9 90H91" strokeDasharray="4 3" opacity="0.48" {...detail} />
         </>
       );
       break;
@@ -752,10 +1170,13 @@ function ShapeVisualComponent({
   return (
     <svg
       className={className}
+      data-shape-kind={kind}
+      data-scientific-variant={variant === 'default' ? undefined : variant}
       x={x}
       y={y}
       width={width}
       height={height}
+      style={style}
       viewBox="0 0 100 100"
       preserveAspectRatio="none"
       aria-hidden="true"

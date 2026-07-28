@@ -25,9 +25,9 @@ export const ARXIV_FIGURE_CORPUS_SUMMARY = {
   paperCount: 100,
   llmPaperCount: 50,
   embodiedPaperCount: 50,
-  parsedFigureCount: 2603,
-  llmFigureCount: 1448,
-  embodiedFigureCount: 1155,
+  parsedFigureCount: 1289,
+  llmFigureCount: 656,
+  embodiedFigureCount: 633,
   generatedAt: '2026-07-28',
 } as const;
 
@@ -207,18 +207,18 @@ export const SCIENTIFIC_FIGURE_RECIPES: Record<ScientificSchematicTemplateId, Sc
     elements: [
       { kind: 'scientific-dataset-stack', label: '语料/指令/偏好数据', purpose: '区分三种监督来源。' },
       { kind: 'scientific-transformer', label: '主干模型', purpose: '显示 checkpoint 的阶段演化。' },
-      { kind: 'scientific-loss-target', label: '阶段目标', purpose: '分别表示 next-token、SFT、preference loss。' },
-      { kind: 'scientific-mini-plot', label: '评测结果', purpose: '在尾部展示性能与安全权衡。' },
+      { kind: 'scientific-loss-target', label: '阶段目标', purpose: '分别表示 next-token、SFT、DPO 或 RM→PPO 目标。' },
+      { kind: 'scientific-equation', label: '评测协议', purpose: '用任务、基线、随机种子和置信区间定义可核验评测。' },
     ],
     arrowRules: ['粗实线 = checkpoint 传递；细实线 = 训练数据；向上虚线 = 损失；回弯线 = 评测反馈。'],
     colorRules: ['灰/黄 = 数据；紫 = 模型；橙 = 训练目标；蓝绿 = 评测维度。'],
     steps: [
       '建立五个等高阶段，并让 checkpoint 主路径贯穿中线。',
       '在语料阶段画原始数据栈、过滤器、去重和最终 mixture。',
-      '预训练、SFT、偏好阶段各复用一个 Transformer 图元，并在右上角标参数状态。',
+      '预训练与 SFT 复用一致的 Transformer 图元；从 SFT π_ref 分出 DPO 与 RM→PPO 两条独立替代路径，再汇入 aligned θ*。',
       '每阶段的数据栈放在主干下方，损失目标用虚线上连。',
       'checkpoint 之间用粗箭头，标注 base、instruct、aligned。',
-      '末端放能力/安全两张小型曲线图，必要时画回评测数据的反馈线。',
+      '末端默认放符号化评测协议，不填任意能力、安全或风险数值；只有绑定可追溯数据、字段、单位、样本量和不确定性后才绘制真实曲线。',
     ],
   }),
   'moe-routing': recipe({

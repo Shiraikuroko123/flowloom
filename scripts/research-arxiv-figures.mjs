@@ -330,6 +330,11 @@ function parseFigures(html, baseUrl, paper, domain) {
     const captionNode = figure.querySelector(':scope > figcaption, :scope > .ltx_caption') ?? figure.querySelector('figcaption, .ltx_caption');
     const caption = normalize(captionNode?.textContent ?? '');
     const label = normalize(captionNode?.querySelector('.ltx_tag_figure')?.textContent ?? caption.match(/^Figure\s+[\w.-]+/i)?.[0] ?? `Figure ${index + 1}`);
+    const tableLabel = normalize(captionNode?.querySelector('.ltx_tag_table')?.textContent ?? '');
+    const isTable = Boolean(tableLabel)
+      || figure.matches('.ltx_table, table, [role="table"]')
+      || /^Table\s+[\w.-]+/i.test(caption)
+      || /^Table\s+[\w.-]+/i.test(label);
     const resourceBaseUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
     const images = [...figure.querySelectorAll('img')].map((image) => ({
       url: new URL(image.getAttribute('src'), resourceBaseUrl).href,
@@ -342,9 +347,14 @@ function parseFigures(html, baseUrl, paper, domain) {
     seen.add(uniqueKey);
     const tags = classifyFigure(caption, paper.title, domain);
     const keywordScore = /overview|architecture|framework|pipeline|approach|system|illustration|method/i.test(caption) ? 80 : 0;
-    const score = keywordScore + Math.max(0, 50 - index * 3) + Math.min(20, images.length * 4) + (caption.length > 80 ? 8 : 0);
-    return { id, label, caption, images, tags, score, order: index + 1 };
-  }).filter(Boolean).filter((figure) => figure.caption || figure.images.length);
+    const imageAreaScore = Math.min(24, images.reduce((sum, image) => sum + Math.log10(Math.max(1, (image.width ?? 1) * (image.height ?? 1))), 0));
+    const score = keywordScore
+      + Math.max(0, 50 - index * 3)
+      + Math.min(24, images.length * 6)
+      + imageAreaScore
+      + (caption.length > 80 ? 8 : 0);
+    return { id, label, caption, images, tags, score, order: index + 1, isTable };
+  }).filter(Boolean).filter((figure) => !figure.isTable && figure.images.length > 0);
 }
 
 async function fetchPaperFigures(paper, domain) {
@@ -358,7 +368,10 @@ async function fetchPaperFigures(paper, domain) {
       const html = await cachedText(sourceUrl, 'paper-html');
       const figures = parseFigures(html, sourceUrl, paper, domain);
       if (!figures.length) throw new Error('No figure elements found');
-      const representative = [...figures].sort((a, b) => b.score - a.score || a.order - b.order)[0];
+      const representative = [...figures]
+        .filter((figure) => figure.images.length > 0 && !figure.isTable)
+        .sort((a, b) => b.score - a.score || a.order - b.order)[0];
+      if (!representative) throw new Error('No renderable non-table figure found');
       return { sourceUrl, figures, representative };
     } catch (error) {
       lastError = error;
@@ -440,8 +453,9 @@ async function researchDomain(domain) {
   const candidateIds = [...new Set([...seedPapers, ...searchedPapers].map((paper) => paper.arxivId))];
   console.log(`[${domain}] enriching ${candidateIds.length} candidates with citation metadata`);
   const citations = await fetchSemanticScholar(candidateIds);
-  const selected = selectBalanced(domain, mergePapers(domain, seedPapers, searchedPapers, citations), LIMIT);
-  console.log(`[${domain}] selected ${selected.length} papers; extracting figures`);
+  const candidatePoolSize = Math.min(candidateIds.length, LIMIT + Math.max(20, Math.ceil(LIMIT * 0.4)));
+  const selected = selectBalanced(domain, mergePapers(domain, seedPapers, searchedPapers, citations), candidatePoolSize);
+  console.log(`[${domain}] selected ${selected.length} candidates to secure ${LIMIT} valid representative figures`);
 
   const papers = new Array(selected.length);
   let nextIndex = 0;
@@ -472,7 +486,15 @@ async function researchDomain(domain) {
     }
   }
   await Promise.all(Array.from({ length: Math.min(4, selected.length) }, () => worker()));
-  return papers;
+  const valid = papers.filter((paper) => {
+    const representative = paper.representativeFigure;
+    if (!representative?.images?.length || representative.isTable) return false;
+    return !DOWNLOAD_IMAGES || representative.localAnalysisImages.length > 0;
+  });
+  if (valid.length < LIMIT) {
+    throw new Error(`[${domain}] only ${valid.length}/${LIMIT} papers have a renderable non-table representative figure`);
+  }
+  return valid.slice(0, LIMIT);
 }
 
 function markdownTable(counts) {
@@ -505,7 +527,7 @@ async function main() {
       arxivApi: 'https://export.arxiv.org/api/query',
       figureHtml: ['https://ar5iv.labs.arxiv.org/html/{id}', 'https://arxiv.org/html/{id}'],
       citationSource: 'Semantic Scholar Graph API batch endpoint',
-      selection: 'Curated foundational seeds plus six topic searches; topic quotas and citation/recency scoring.',
+      selection: 'Curated foundational seeds plus six topic searches; topic quotas and citation/recency scoring; representatives require a renderable non-table image.',
       licenseBoundary: 'Original images are local analysis artifacts only. Product assets are independently drawn native vectors.',
     },
     topics: TOPICS,

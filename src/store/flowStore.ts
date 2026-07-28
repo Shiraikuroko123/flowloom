@@ -31,6 +31,7 @@ import {
   normalizeGraph,
   reactFlowEdgeType,
 } from '../lib/diagram';
+import { SCIENTIFIC_CONNECTOR_STYLES } from '../lib/scientificRouting';
 import { createId } from '../lib/id';
 import { getTemplate } from '../data/templates';
 
@@ -520,18 +521,29 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     set((state) => {
       const edges = state.edges.map((edge) => {
         if (edge.id !== id) return edge;
+        const scientificSemantic = Object.prototype.hasOwnProperty.call(patch, 'scientificSemantic')
+          ? patch.scientificSemantic
+          : edge.data?.scientificSemantic;
+        const semanticStyle = patch.scientificSemantic
+          ? SCIENTIFIC_CONNECTOR_STYLES[patch.scientificSemantic]
+          : undefined;
         const data: FlowEdgeData = {
+          ...edge.data,
           label: patch.label ?? edge.data?.label,
-          color: patch.color ?? edge.data?.color ?? 'oklch(0.430 0.025 70)',
-          width: patch.width ?? edge.data?.width ?? 1.75,
-          lineStyle: patch.lineStyle ?? edge.data?.lineStyle ?? 'solid',
+          color: patch.color ?? semanticStyle?.color ?? edge.data?.color ?? 'oklch(0.430 0.025 70)',
+          width: patch.width ?? semanticStyle?.width ?? edge.data?.width ?? 1.75,
+          lineStyle: patch.lineStyle ?? semanticStyle?.lineStyle ?? edge.data?.lineStyle ?? 'solid',
           routing: patch.routing ?? edge.data?.routing ?? 'smoothstep',
           arrowStart: patch.arrowStart ?? edge.data?.arrowStart ?? 'none',
-          arrowEnd: patch.arrowEnd ?? edge.data?.arrowEnd ?? 'closed',
+          arrowEnd: patch.arrowEnd ?? semanticStyle?.arrowEnd ?? edge.data?.arrowEnd ?? 'closed',
+          scientificSemantic,
+          routeSide: patch.routeSide ?? edge.data?.routeSide,
+          routeOffset: patch.routeOffset ?? edge.data?.routeOffset,
+          labelFontSize: patch.labelFontSize ?? edge.data?.labelFontSize,
         };
         return {
           ...edge,
-          type: reactFlowEdgeType(data.routing),
+          type: data.scientificSemantic ? 'scientific' : reactFlowEdgeType(data.routing),
           label: data.label,
           data,
           markerStart: createEdgeMarker(data.arrowStart, data.color),

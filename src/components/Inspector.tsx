@@ -33,6 +33,9 @@ import type {
   FlowEdge,
   FlowNode,
   LineStyle,
+  ScientificConnectorSemantic,
+  ScientificEvidenceState,
+  ScientificVisualVariant,
   ShapeKind,
   TextAlign,
   VerticalAlign,
@@ -43,6 +46,8 @@ import {
   getShapeDefinition,
   type ShapeCategory,
 } from '../lib/shapeRegistry';
+import { SCIENTIFIC_CONNECTOR_LABELS } from '../lib/scientificRouting';
+import { getScientificVisualVariants } from '../lib/scientificVisualVariants';
 import { useFlowStore } from '../store/flowStore';
 import { IconButton } from './IconButton';
 import { LayerPanel } from './LayerPanel';
@@ -206,6 +211,7 @@ export function Inspector({ open, nodes, edges, onOpenAi }: InspectorProps) {
           const width = Number(node.measured?.width ?? node.width ?? node.style?.width ?? 176);
           const height = Number(node.measured?.height ?? node.height ?? node.style?.height ?? 72);
           const currentShapeDefinition = getShapeDefinition(node.data.kind);
+          const scientificVariants = getScientificVisualVariants(node.data.kind);
           return (
             <>
               {effectivelyLocked && (
@@ -237,6 +243,34 @@ export function Inspector({ open, nodes, edges, onOpenAi }: InspectorProps) {
                     ))}
                   </select>
                 </label>
+                {scientificVariants.length > 0 && (
+                  <label className="field-stack">
+                    <FieldLabel>科研视觉语义</FieldLabel>
+                    <select
+                      value={node.data.scientificVariant ?? 'default'}
+                      onChange={(event) => updateNodeData(node.id, { scientificVariant: event.target.value as ScientificVisualVariant })}
+                      {...transactionProps}
+                    >
+                      {scientificVariants.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+                )}
+                {(node.data.kind.startsWith('scientific-') || node.data.scientificEvidence) && (
+                  <label className="field-stack">
+                    <FieldLabel>证据状态</FieldLabel>
+                    <select
+                      value={node.data.scientificEvidence ?? ''}
+                      onChange={(event) => updateNodeData(node.id, {
+                        scientificEvidence: (event.target.value || undefined) as ScientificEvidenceState | undefined,
+                      })}
+                      {...transactionProps}
+                    >
+                      <option value="">未声明</option>
+                      <option value="schematic">示意结构</option>
+                      <option value="data-bound">数据绑定</option>
+                    </select>
+                  </label>
+                )}
               </section>
 
               <section className="inspector-section">
@@ -361,6 +395,20 @@ export function Inspector({ open, nodes, edges, onOpenAi }: InspectorProps) {
               <label className="field-stack">
                 <FieldLabel>标签</FieldLabel>
                 <input value={String(edge.data?.label ?? edge.label ?? '')} onChange={(event) => updateEdge(edge.id, { label: event.target.value })} {...transactionProps} />
+              </label>
+              <label className="field-stack">
+                <FieldLabel>科研语义</FieldLabel>
+                <select
+                  value={edge.data?.scientificSemantic ?? ''}
+                  onChange={(event) => updateEdge(edge.id, {
+                    scientificSemantic: (event.target.value || undefined) as ScientificConnectorSemantic | undefined,
+                  })}
+                >
+                  <option value="">普通连接线</option>
+                  {(Object.keys(SCIENTIFIC_CONNECTOR_LABELS) as ScientificConnectorSemantic[]).map((semantic) => (
+                    <option key={semantic} value={semantic}>{SCIENTIFIC_CONNECTOR_LABELS[semantic]}</option>
+                  ))}
+                </select>
               </label>
               <fieldset className="segmented-field">
                 <legend>路径</legend>

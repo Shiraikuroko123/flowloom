@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createFlowEdge, createFlowNode } from './diagram';
-import { serializePublicationSvg } from './scientificExport';
+import { preparePublicationSvgForPdf, serializePublicationSvg } from './scientificExport';
 import {
   auditScientificFigure,
   buildScientificChartSpec,
@@ -58,7 +58,7 @@ describe('scientific data tables', () => {
 describe('scientific figure layout', () => {
   it('converts millimeters and creates export-safe panel guides', () => {
     const layout = createScientificFigureLayout(figure);
-    expect(mmToPx(25.4)).toBeCloseTo(96, 6);
+    expect(mmToPx(25.4)).toBeCloseTo(254, 6);
     expect(layout.nodes).toHaveLength(9);
     const background = layout.nodes.find((node) => node.data.scientificRole === 'figure-background');
     const guides = layout.nodes.filter((node) => node.data.scientificRole === 'panel-guide');
@@ -92,16 +92,171 @@ describe('scientific figure layout', () => {
 
 describe('scientific quality checks', () => {
   it('reports small text, thin strokes, raster uncertainty, and overflow', () => {
-    const small = createFlowNode('process', { x: 700, y: 20 }, 'Small text', { style: { width: 100, height: 60 } });
+    const small = createFlowNode('process', { x: 1750, y: 20 }, 'Small text', { style: { width: 100, height: 60 } });
     small.data = { ...small.data, fontSize: 8, borderWidth: 0.4 };
     const image = createFlowNode('image', { x: 20, y: 20 }, 'Raster');
     const issues = auditScientificFigure([small, image], figure);
     expect(issues.map((issue) => issue.id)).toEqual(expect.arrayContaining([
-      'small-text',
-      'thin-stroke',
+      'text-below-publication-minimum',
+      'stroke-below-0.6pt',
       'raster-resolution',
       'outside-figure',
     ]));
+  });
+
+  it('blocks sub-0.6 pt connectors and missing endpoints', () => {
+    const source = createFlowNode('process', { x: 40, y: 180 }, 'Source', { id: 'source' });
+    const target = createFlowNode('process', { x: 480, y: 180 }, 'Target', { id: 'target' });
+    const thin = createFlowEdge(source.id, target.id, undefined, 'straight');
+    thin.id = 'thin-edge';
+    thin.data = { ...thin.data!, width: 0.5 };
+    const dangling = createFlowEdge(source.id, 'missing', undefined, 'straight');
+    dangling.id = 'dangling-edge';
+
+    const issues = auditScientificFigure([source, target], figure, [thin, dangling]);
+    expect(issues.find((issue) => issue.id === 'edge-stroke-below-0.6pt')?.edgeIds).toContain(thin.id);
+    expect(issues.find((issue) => issue.id === 'invalid-edge-endpoint')?.edgeIds).toContain(dangling.id);
+  });
+
+  it('detects connectors that pass through an unrelated module', () => {
+    const source = createFlowNode('process', { x: 40, y: 220 }, 'Source', { id: 'source' });
+    const obstacle = createFlowNode('process', { x: 260, y: 200 }, 'Obstacle', { id: 'obstacle' });
+    const target = createFlowNode('process', { x: 500, y: 220 }, 'Target', { id: 'target' });
+    const edge = createFlowEdge(source.id, target.id, undefined, 'straight');
+    edge.id = 'through-edge';
+    edge.sourceHandle = 'right';
+    edge.targetHandle = 'left';
+
+    const issue = auditScientificFigure([source, obstacle, target], figure, [edge])
+      .find((candidate) => candidate.id === 'edge-through-node');
+    expect(issue?.edgeIds).toContain(edge.id);
+    expect(issue?.nodeIds).toContain(obstacle.id);
+  });
+
+  it('blocks nodes and connectors from entering a phase heading safe zone', () => {
+    const phase = createFlowNode('group', { x: 40, y: 80 }, 'A  Multimodal reasoning', {
+      id: 'phase',
+      style: { width: 420, height: 260 },
+    });
+    phase.data = {
+      ...phase.data,
+      schematicRole: 'phase',
+      fontSize: 32,
+      textAlign: 'left',
+      verticalAlign: 'top',
+    };
+    const source = createFlowNode('process', { x: 70, y: 96 }, 'Overlapping module', { id: 'phase-source' });
+    const target = createFlowNode('process', { x: 520, y: 96 }, 'Target', { id: 'phase-target' });
+    const edge = createFlowEdge(source.id, target.id, undefined, 'straight');
+    edge.id = 'heading-edge';
+    edge.sourceHandle = 'right';
+    edge.targetHandle = 'left';
+
+    const issue = auditScientificFigure([phase, source, target], figure, [edge])
+      .find((candidate) => candidate.id === 'phase-heading-collision');
+    expect(issue?.nodeIds).toEqual(expect.arrayContaining([phase.id, source.id]));
+    expect(issue?.edgeIds).toContain(edge.id);
+  });
+
+  it('reports independent connector crossings', () => {
+    const left = createFlowNode('process', { x: 40, y: 260 }, 'Left', { id: 'left' });
+    const right = createFlowNode('process', { x: 520, y: 260 }, 'Right', { id: 'right' });
+    const top = createFlowNode('process', { x: 290, y: 60 }, 'Top', { id: 'top' });
+    const bottom = createFlowNode('process', { x: 290, y: 480 }, 'Bottom', { id: 'bottom' });
+    const horizontal = createFlowEdge(left.id, right.id, undefined, 'straight');
+    horizontal.id = 'horizontal-edge';
+    horizontal.sourceHandle = 'right';
+    horizontal.targetHandle = 'left';
+    const vertical = createFlowEdge(top.id, bottom.id, undefined, 'straight');
+    vertical.id = 'vertical-edge';
+    vertical.sourceHandle = 'bottom';
+    vertical.targetHandle = 'top';
+
+    const issue = auditScientificFigure([left, right, top, bottom], figure, [horizontal, vertical])
+      .find((candidate) => candidate.id === 'edge-crossings');
+    expect(issue?.edgeIds).toEqual(expect.arrayContaining([horizontal.id, vertical.id]));
+  });
+
+  it('rejects long collinear overlap even when edges share a target', () => {
+    const upper = createFlowNode('process', { x: 40, y: 100 }, 'Upper', { id: 'upper' });
+    const lower = createFlowNode('process', { x: 40, y: 300 }, 'Lower', { id: 'lower' });
+    const target = createFlowNode('process', { x: 520, y: 200 }, 'Shared target', { id: 'shared-target' });
+    const first = createFlowEdge(upper.id, target.id);
+    const second = createFlowEdge(lower.id, target.id);
+    first.id = 'overlap-a';
+    second.id = 'overlap-b';
+    first.sourceHandle = second.sourceHandle = 'right';
+    first.targetHandle = second.targetHandle = 'left';
+
+    const issue = auditScientificFigure([upper, lower, target], figure, [first, second])
+      .find((candidate) => candidate.id === 'edge-collinear-overlap');
+    expect(issue?.edgeIds).toEqual(expect.arrayContaining([first.id, second.id]));
+  });
+
+  it('rejects a same-side route that approaches a target from inside', () => {
+    const source = createFlowNode('process', { x: 420, y: 100 }, 'SFT', { id: 'sft' });
+    const target = createFlowNode('process', { x: 300, y: 300 }, 'DPO', { id: 'dpo' });
+    const edge = createFlowEdge(source.id, target.id);
+    edge.id = 'inside-target';
+    edge.sourceHandle = 'left';
+    edge.targetHandle = 'left';
+
+    const issue = auditScientificFigure([source, target], figure, [edge])
+      .find((candidate) => candidate.id === 'edge-port-direction');
+    expect(issue?.edgeIds).toContain(edge.id);
+  });
+
+  it('blocks unclassified, literal schematic, and incomplete data-bound result glyphs', () => {
+    const unclassified = createFlowNode('scientific-mini-plot', { x: 40, y: 80 }, 'Metric');
+    const literal = createFlowNode('scientific-metric-panel', { x: 260, y: 80 }, 'p = .86');
+    literal.data = { ...literal.data, scientificEvidence: 'schematic' };
+    const incomplete = createFlowNode('scientific-probability-bars', { x: 480, y: 80 }, 'Measured');
+    incomplete.data = { ...incomplete.data, scientificEvidence: 'data-bound' };
+
+    const ids = auditScientificFigure([unclassified, literal, incomplete], figure).map((issue) => issue.id);
+    expect(ids).toEqual(expect.arrayContaining([
+      'unclassified-scientific-evidence',
+      'schematic-literal-result',
+      'incomplete-data-contract',
+    ]));
+  });
+
+  it('keeps a deep feedback route outside intervening modules', () => {
+    const scene = createFlowNode('process', { x: 100, y: 80 }, 'Scene', { id: 'scene' });
+    const state = createFlowNode('process', { x: 100, y: 300 }, 'State', { id: 'state' });
+    const robot = createFlowNode('process', { x: 520, y: 300 }, 'Robot', { id: 'robot' });
+    const feedback = createFlowEdge(robot.id, scene.id, 't+1', 'bezier');
+    feedback.id = 'feedback-edge';
+    feedback.sourceHandle = 'bottom';
+    feedback.targetHandle = 'left';
+    feedback.data = {
+      ...feedback.data!,
+      scientificSemantic: 'feedback',
+      routeSide: 'bottom-left',
+      routeOffset: 110,
+    };
+
+    const issues = auditScientificFigure([scene, state, robot], figure, [feedback]);
+    expect(issues.find((issue) => issue.id === 'edge-through-node')).toBeUndefined();
+  });
+
+  it('blocks connector labels that extend beyond the physical figure', () => {
+    const source = createFlowNode('process', { x: 20, y: 160 }, 'Source', { id: 'source' });
+    const target = createFlowNode('process', { x: 20, y: 460 }, 'Target', { id: 'target' });
+    const feedback = createFlowEdge(source.id, target.id, 'feedback', 'bezier');
+    feedback.id = 'outside-label';
+    feedback.sourceHandle = 'left';
+    feedback.targetHandle = 'left';
+    feedback.data = {
+      ...feedback.data!,
+      scientificSemantic: 'feedback',
+      routeSide: 'left',
+      routeOffset: 80,
+    };
+
+    const issue = auditScientificFigure([source, target], figure, [feedback])
+      .find((candidate) => candidate.id === 'edge-label-outside-figure');
+    expect(issue?.edgeIds).toContain(feedback.id);
   });
 });
 
@@ -118,6 +273,50 @@ describe('publication SVG export', () => {
     expect(svg).toContain('<path');
     expect(svg).toContain('<text');
     expect(svg).not.toContain('foreignObject');
-    expect(new DOMParser().parseFromString(svg, 'image/svg+xml').querySelector('parsererror')).toBeNull();
+    const document = new DOMParser().parseFromString(svg, 'image/svg+xml');
+    expect(document.querySelector('parsererror')).toBeNull();
+    expect(document.querySelector('[data-flowloom-edge-label-bg="true"]')).not.toBeNull();
+    expect(document.querySelector('[data-flowloom-edge-label="true"] text')?.hasAttribute('stroke')).toBe(false);
+    expect(document.querySelector('[data-flowloom-edge-label="true"] text')?.hasAttribute('paint-order')).toBe(false);
+  });
+
+  it('preserves editable scientific shape and visual-variant metadata in SVG', () => {
+    const model = createFlowNode('scientific-transformer', { x: 80, y: 90 }, 'Latent World Model', {
+      id: 'world-model',
+      style: { width: 310, height: 150 },
+    });
+    model.data = {
+      ...model.data,
+      description: 'p(zₜ₊₁ | zₜ, aₜ)',
+      scientificVariant: 'world-model',
+    };
+    const svg = serializePublicationSvg('World model', [model], [], { ...figure, rows: 1, columns: 1 });
+    const document = new DOMParser().parseFromString(svg, 'image/svg+xml');
+    const shape = document.querySelector('[data-shape-kind="scientific-transformer"]');
+
+    expect(shape).not.toBeNull();
+    expect(shape?.getAttribute('data-scientific-variant')).toBe('world-model');
+    expect(document.querySelector('[data-flowloom-node-id="world-model"]')).not.toBeNull();
+  });
+
+  it('prepares Unicode text while preserving SVG stroke widths for vector PDF scaling', () => {
+    const source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1200">'
+      + '<path vector-effect="non-scaling-stroke" stroke-width="3.6"/>'
+      + '<text font-family="Segoe UI" font-weight="650">世界模型 p(zₜ₊₁ | zₜ, aₜ)</text>'
+      + '</svg>';
+    const document = new DOMParser().parseFromString(source, 'image/svg+xml');
+    const svg = document.documentElement as unknown as SVGSVGElement;
+
+    preparePublicationSvgForPdf(svg, figure);
+
+    expect(svg.querySelector('path')?.getAttribute('stroke-width')).toBe('3.6');
+    expect(svg.querySelector('path')?.hasAttribute('vector-effect')).toBe(false);
+    expect(svg.querySelector('text')?.getAttribute('font-family')).toBe('Flowloom Publication Sans');
+    expect(svg.querySelector('text')?.getAttribute('font-weight')).toBe('700');
+    expect(svg.querySelector('text')?.textContent).toContain('p(zt+1 | zt, at)');
+    expect(svg.querySelectorAll('[data-flowloom-script="subscript"]')).toHaveLength(3);
+    expect(Array.from(svg.querySelectorAll('[data-flowloom-script="subscript"]')).map((span) => span.textContent))
+      .toEqual(['t+1', 't', 't']);
+    expect(svg.querySelector('[data-flowloom-script="subscript"]')?.getAttribute('dy')).not.toBeNull();
   });
 });

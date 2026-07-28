@@ -9,13 +9,14 @@ import {
 import { FileImage, LockKeyhole } from 'lucide-react';
 import type { FlowNode as FlowNodeType } from '../types';
 import { getShapeDefinition } from '../lib/shapeRegistry';
+import { isScientificShapeKind, layoutScientificNodeContent } from '../lib/scientificNodeLayout';
 import { useFlowStore } from '../store/flowStore';
 import { ShapeVisual } from './ShapeVisual';
 import { SvgVectorVisual } from './SvgVectorVisual';
 
 const positions = [Position.Top, Position.Right, Position.Bottom, Position.Left];
 
-export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
+export function FlowNode({ id, data, selected, width, height }: NodeProps<FlowNodeType>) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(data.label);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -24,6 +25,11 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
   const endTransaction = useFlowStore((state) => state.endTransaction);
   const updateNodeInternals = useUpdateNodeInternals();
   const definition = getShapeDefinition(data.kind);
+  const nodeWidth = width ?? definition.width;
+  const nodeHeight = height ?? definition.height;
+  const scientificLayout = isScientificShapeKind(data.kind)
+    ? layoutScientificNodeContent(data, nodeWidth, nodeHeight)
+    : undefined;
   const supportsInlineTextEditing = data.kind !== 'image'
     && (data.kind !== 'vector' || data.vector?.tag === 'text');
 
@@ -56,10 +62,12 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
     '--node-border-width': `${data.borderWidth}px`,
     '--node-radius': `${data.radius}px`,
     '--node-font-size': `${data.fontSize}px`,
+    '--node-description-font-size': `${Math.max(11, data.fontSize * 0.86)}px`,
     '--node-font-weight': data.fontWeight,
     '--node-text-align': data.textAlign,
     '--node-opacity': data.opacity,
     '--node-rotation': `${data.rotation ?? 0}deg`,
+    '--node-visual-height': scientificLayout ? `${scientificLayout.visualHeight}px` : '100%',
   } as CSSProperties;
 
   const textEditor = (
@@ -87,7 +95,18 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
         ? <span className="sr-only">{data.label}</span>
         : <span className="flow-node__image-label">{data.label}</span>}
     </div>
-  ) : editing ? textEditor : (
+  ) : editing ? textEditor : scientificLayout ? (
+    <>
+      <span className="flow-node__label">
+        {scientificLayout.labelLines.map((line, index) => <span key={`${line}-${index}`}>{line || '\u00a0'}</span>)}
+      </span>
+      {scientificLayout.descriptionLines.length > 0 && (
+        <span className="flow-node__description">
+          {scientificLayout.descriptionLines.map((line, index) => <span key={`${line}-${index}`}>{line || '\u00a0'}</span>)}
+        </span>
+      )}
+    </>
+  ) : (
     <>
       <span className="flow-node__label">{data.label}</span>
       {data.description && <span className="flow-node__description">{data.description}</span>}
@@ -103,6 +122,8 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
   return (
     <div
       className={`flow-node flow-node--${data.kind} ${selected ? 'is-selected' : ''} ${data.locked ? 'is-locked' : ''}`}
+      data-scientific-layout={scientificLayout ? definition.textPlacement : undefined}
+      data-schematic-role={data.schematicRole}
       style={variables}
       onDoubleClick={(event) => {
         if (data.locked || !supportsInlineTextEditing) return;
@@ -144,6 +165,7 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
           stroke={data.stroke}
           strokeWidth={data.borderWidth}
           radius={data.radius}
+          variant={data.scientificVariant}
         />
       )}
       {data.kind !== 'vector' && (

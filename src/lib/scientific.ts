@@ -1,5 +1,6 @@
 import type { TopLevelSpec } from 'vega-lite';
 import type {
+  FlowEdge,
   FlowNode,
   ScientificAuditIssue,
   ScientificChartType,
@@ -8,12 +9,34 @@ import type {
   ScientificProvenance,
   SvgPrimitiveTag,
 } from '../types';
-import { createFlowNode } from './diagram';
+import { createFlowNode, estimateSvgTextWidth } from './diagram';
+import {
+  containsUnsupportedLiteralResult,
+  hasCompleteScientificDataContract,
+  isResultLikeScientificNode,
+} from './scientificEvidence';
 import { createId } from './id';
+import { getShapeDefinition } from './shapeRegistry';
 import { parseEditableSvg } from './svgImport';
+import { routeScientificEdge, scientificConnectionPoint, type ScientificRoutePoint } from './scientificRouting';
 
 export const CSS_PIXELS_PER_INCH = 96;
 export const MILLIMETERS_PER_INCH = 25.4;
+export const POINTS_PER_INCH = 72;
+export const SCIENTIFIC_UNITS_PER_MM = 10;
+export const PUBLICATION_TYPOGRAPHY = {
+  figureTitle: 34,
+  panelLabel: 32,
+  stageTitle: 30,
+  moduleLabel: 28,
+  annotation: 24,
+  edgeLabel: 22,
+} as const;
+export const PUBLICATION_STROKES = {
+  primary: 3.6,
+  secondary: 2.4,
+  frame: 2.8,
+} as const;
 export const OKABE_ITO_PALETTE = [
   '#0072B2',
   '#E69F00',
@@ -66,11 +89,19 @@ export interface EditableScientificChart {
 }
 
 export function mmToPx(value: number): number {
-  return value * CSS_PIXELS_PER_INCH / MILLIMETERS_PER_INCH;
+  return value * SCIENTIFIC_UNITS_PER_MM;
 }
 
 export function pxToMm(value: number): number {
-  return value * MILLIMETERS_PER_INCH / CSS_PIXELS_PER_INCH;
+  return value / SCIENTIFIC_UNITS_PER_MM;
+}
+
+export function scientificUnitsToPoints(value: number): number {
+  return pxToMm(value) * POINTS_PER_INCH / MILLIMETERS_PER_INCH;
+}
+
+export function pointsToScientificUnits(value: number): number {
+  return value * MILLIMETERS_PER_INCH / POINTS_PER_INCH * SCIENTIFIC_UNITS_PER_MM;
 }
 
 function detectDelimiter(source: string): ScientificTable['delimiter'] {
@@ -174,8 +205,8 @@ export function buildScientificChartSpec(table: ScientificTable, options: Scient
   const shared = {
     $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
     title: options.title.trim() || undefined,
-    width: 520,
-    height: 320,
+    width: 760,
+    height: 470,
     autosize: { type: 'pad', contains: 'padding' },
     data: { values: table.rows },
     config: {
@@ -185,29 +216,34 @@ export function buildScientificChartSpec(table: ScientificTable, options: Scient
       view: { stroke: null },
       axis: {
         domainColor: '#333333',
-        domainWidth: 1,
+        domainWidth: PUBLICATION_STROKES.secondary,
         gridColor: '#d8d8d8',
         gridOpacity: 0.55,
-        gridWidth: 0.8,
+        gridWidth: pointsToScientificUnits(0.6),
         labelColor: '#202020',
-        labelFontSize: 11,
-        labelLimit: 180,
+        labelFontSize: PUBLICATION_TYPOGRAPHY.moduleLabel,
+        labelLimit: 260,
         tickColor: '#555555',
-        tickSize: 4,
+        tickSize: 7,
+        tickWidth: PUBLICATION_STROKES.secondary,
         titleColor: '#202020',
-        titleFontSize: 12,
+        titleFontSize: PUBLICATION_TYPOGRAPHY.moduleLabel,
         titleFontWeight: 600,
         titlePadding: 10,
       },
-      legend: { labelFontSize: 11, titleFontSize: 11, symbolStrokeWidth: 1.5 },
-      title: { color: '#181818', fontSize: 15, fontWeight: 650, offset: 14 },
+      legend: {
+        labelFontSize: PUBLICATION_TYPOGRAPHY.moduleLabel,
+        titleFontSize: PUBLICATION_TYPOGRAPHY.moduleLabel,
+        symbolStrokeWidth: PUBLICATION_STROKES.primary,
+      },
+      title: { color: '#181818', fontSize: PUBLICATION_TYPOGRAPHY.figureTitle, fontWeight: 650, offset: 20 },
     },
   };
 
   if (chartType === 'scatter') {
     return {
       ...shared,
-      mark: { type: 'point', filled: true, size: 68, opacity: 0.82, stroke: '#ffffff', strokeWidth: 0.6 },
+      mark: { type: 'point', filled: true, size: 132, opacity: 0.86, stroke: '#ffffff', strokeWidth: PUBLICATION_STROKES.secondary },
       encoding: {
         x,
         y,
@@ -220,7 +256,7 @@ export function buildScientificChartSpec(table: ScientificTable, options: Scient
   if (chartType === 'line') {
     return {
       ...shared,
-      mark: { type: 'line', point: { filled: true, size: 48 }, strokeWidth: 2 },
+      mark: { type: 'line', point: { filled: true, size: 104 }, strokeWidth: PUBLICATION_STROKES.primary },
       encoding: {
         x,
         y,
@@ -259,7 +295,7 @@ export function buildScientificChartSpec(table: ScientificTable, options: Scient
   if (chartType === 'heatmap') {
     return {
       ...shared,
-      mark: { type: 'rect', stroke: '#ffffff', strokeWidth: 0.75 },
+      mark: { type: 'rect', stroke: '#ffffff', strokeWidth: PUBLICATION_STROKES.secondary },
       encoding: {
         x: { ...x, type: 'ordinal', sort: null },
         y: { ...y, type: 'ordinal', sort: null },
@@ -276,7 +312,7 @@ export function buildScientificChartSpec(table: ScientificTable, options: Scient
         encoding: { x, y, yError: { field: fields.error }, color: group, tooltip },
       },
       {
-        mark: { type: 'point', filled: true, size: 62, stroke: '#ffffff', strokeWidth: 0.6 },
+        mark: { type: 'point', filled: true, size: 118, stroke: '#ffffff', strokeWidth: PUBLICATION_STROKES.secondary },
         encoding: {
           x,
           y,
@@ -398,7 +434,7 @@ export function createScientificFigureLayout(specInput: ScientificFigureSpec): {
       ));
       if (spec.panelLabels) {
         const label = panelLabel(index, spec.labelStyle);
-        const fontSize = 16;
+        const fontSize = PUBLICATION_TYPOGRAPHY.panelLabel;
         const labelWidth = Math.max(20, label.length * fontSize * 0.72);
         const labelHeight = fontSize * 1.35;
         nodes.push(vectorNode(
@@ -466,6 +502,14 @@ export function createEditableScientificChart(
     textColor: 'transparent',
     borderWidth: 0,
     scientificRole: 'chart-root',
+    scientificEvidence: 'data-bound',
+    scientificDataContract: {
+      sourceName: options.sourceName,
+      fields: Object.values(options.fields).filter((field): field is string => Boolean(field)),
+      units: options.units,
+      metricDefinition: options.chartType,
+      uncertaintyDefinition: options.uncertaintyDefinition || undefined,
+    },
     provenance,
     sourceRef: options.sourceName,
   };
@@ -516,7 +560,202 @@ function absolutePosition(node: FlowNode, byId: Map<string, FlowNode>): { x: num
   return { x, y };
 }
 
-export function auditScientificFigure(nodes: FlowNode[], spec?: ScientificFigureSpec): ScientificAuditIssue[] {
+interface ScientificAuditBox {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function auditBox(node: FlowNode, byId: Map<string, FlowNode>): ScientificAuditBox {
+  const position = absolutePosition(node, byId);
+  return {
+    id: node.id,
+    x: position.x,
+    y: position.y,
+    width: numericStyle(node.style?.width, node.measured?.width ?? node.width ?? 1),
+    height: numericStyle(node.style?.height, node.measured?.height ?? node.height ?? 1),
+  };
+}
+
+function parseHexColor(value: string): [number, number, number] | undefined {
+  const match = value.trim().match(/^#([\da-f]{3}|[\da-f]{6})(?:[\da-f]{2})?$/i);
+  if (!match) return undefined;
+  const hex = match[1].length === 3
+    ? match[1].split('').map((character) => character.repeat(2)).join('')
+    : match[1];
+  return [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255) as [number, number, number];
+}
+
+function relativeLuminance(color: [number, number, number]): number {
+  const [red, green, blue] = color.map((channel) => (
+    channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  ));
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function contrastRatio(foreground: string, background: string): number | undefined {
+  const foregroundRgb = parseHexColor(foreground);
+  const backgroundRgb = parseHexColor(background);
+  if (!foregroundRgb || !backgroundRgb) return undefined;
+  const foregroundLuminance = relativeLuminance(foregroundRgb);
+  const backgroundLuminance = relativeLuminance(backgroundRgb);
+  return (Math.max(foregroundLuminance, backgroundLuminance) + 0.05)
+    / (Math.min(foregroundLuminance, backgroundLuminance) + 0.05);
+}
+
+function overlapArea(left: ScientificAuditBox, right: ScientificAuditBox): number {
+  const width = Math.max(0, Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x));
+  const height = Math.max(0, Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y));
+  return width * height;
+}
+
+function estimatedLineCount(value: string, width: number, fontSize: number): number {
+  return value.split(/\r?\n/).reduce((count, line) => {
+    const normalized = line.trim().split(/\s+/).filter(Boolean).join(' ');
+    return count + Math.max(1, Math.ceil(estimateSvgTextWidth(normalized, fontSize) / Math.max(1, width)));
+  }, 0);
+}
+
+function phaseHeadingBox(node: FlowNode, byId: Map<string, FlowNode>): ScientificAuditBox {
+  const box = auditBox(node, byId);
+  const configuredPadding = Number(node.data.scientificTextPaddingX);
+  const horizontalPadding = Number.isFinite(configuredPadding) && configuredPadding >= 0 ? configuredPadding : 13;
+  const configuredPaddingY = Number(node.data.scientificTextPaddingY);
+  const verticalPadding = Number.isFinite(configuredPaddingY) && configuredPaddingY >= 0 ? configuredPaddingY : 8;
+  const availableWidth = Math.max(1, box.width - horizontalPadding * 2);
+  const lineCount = estimatedLineCount(node.data.label, availableWidth, node.data.fontSize);
+  const measuredWidth = Math.max(...node.data.label.split(/\r?\n/).map((line) => (
+    estimateSvgTextWidth(line.trim().split(/\s+/).filter(Boolean).join(' '), node.data.fontSize)
+  )));
+  return {
+    id: node.id,
+    x: box.x + horizontalPadding - 6,
+    y: box.y + verticalPadding - 6,
+    width: Math.min(availableWidth, measuredWidth) + 12,
+    height: lineCount * node.data.fontSize * 1.2 + 14,
+  };
+}
+
+function routeSegments(points: ScientificRoutePoint[]): Array<[ScientificRoutePoint, ScientificRoutePoint]> {
+  return points.slice(1).map((point, index) => [points[index], point]);
+}
+
+function segmentIntersectsBox(
+  start: ScientificRoutePoint,
+  end: ScientificRoutePoint,
+  box: ScientificAuditBox,
+  padding = 3,
+): boolean {
+  const left = box.x + padding;
+  const right = box.x + box.width - padding;
+  const top = box.y + padding;
+  const bottom = box.y + box.height - padding;
+  if (left >= right || top >= bottom) return false;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  let minimum = 0;
+  let maximum = 1;
+  const constraints: Array<[number, number]> = [
+    [-dx, start.x - left],
+    [dx, right - start.x],
+    [-dy, start.y - top],
+    [dy, bottom - start.y],
+  ];
+  for (const [direction, distanceToBoundary] of constraints) {
+    if (Math.abs(direction) < 1e-9) {
+      if (distanceToBoundary < 0) return false;
+      continue;
+    }
+    const ratio = distanceToBoundary / direction;
+    if (direction < 0) minimum = Math.max(minimum, ratio);
+    else maximum = Math.min(maximum, ratio);
+    if (minimum > maximum) return false;
+  }
+  return maximum >= 0.01 && minimum <= 0.99;
+}
+
+function segmentsCross(
+  firstStart: ScientificRoutePoint,
+  firstEnd: ScientificRoutePoint,
+  secondStart: ScientificRoutePoint,
+  secondEnd: ScientificRoutePoint,
+): boolean {
+  const firstDx = firstEnd.x - firstStart.x;
+  const firstDy = firstEnd.y - firstStart.y;
+  const secondDx = secondEnd.x - secondStart.x;
+  const secondDy = secondEnd.y - secondStart.y;
+  const denominator = firstDx * secondDy - firstDy * secondDx;
+  if (Math.abs(denominator) < 1e-7) return false;
+  const deltaX = secondStart.x - firstStart.x;
+  const deltaY = secondStart.y - firstStart.y;
+  const firstT = (deltaX * secondDy - deltaY * secondDx) / denominator;
+  const secondT = (deltaX * firstDy - deltaY * firstDx) / denominator;
+  return firstT > 0.02 && firstT < 0.98 && secondT > 0.02 && secondT < 0.98;
+}
+
+function collinearOverlapLength(
+  firstStart: ScientificRoutePoint,
+  firstEnd: ScientificRoutePoint,
+  secondStart: ScientificRoutePoint,
+  secondEnd: ScientificRoutePoint,
+): number {
+  const dx = firstEnd.x - firstStart.x;
+  const dy = firstEnd.y - firstStart.y;
+  const length = Math.hypot(dx, dy);
+  const secondLength = Math.hypot(secondEnd.x - secondStart.x, secondEnd.y - secondStart.y);
+  if (length < 0.5 || secondLength < 0.5) return 0;
+  const distanceFromLine = (point: ScientificRoutePoint) => (
+    Math.abs(dx * (point.y - firstStart.y) - dy * (point.x - firstStart.x)) / length
+  );
+  if (distanceFromLine(secondStart) > 0.5 || distanceFromLine(secondEnd) > 0.5) return 0;
+  const unit = { x: dx / length, y: dy / length };
+  const project = (point: ScientificRoutePoint) => (
+    (point.x - firstStart.x) * unit.x + (point.y - firstStart.y) * unit.y
+  );
+  const secondA = project(secondStart);
+  const secondB = project(secondEnd);
+  return Math.max(0, Math.min(length, Math.max(secondA, secondB)) - Math.max(0, Math.min(secondA, secondB)));
+}
+
+function firstDistinctPoint(points: ScientificRoutePoint[], fromEnd = false): ScientificRoutePoint | undefined {
+  const values = fromEnd ? [...points].reverse() : points;
+  const origin = values[0];
+  return values.slice(1).find((point) => Math.hypot(point.x - origin.x, point.y - origin.y) > 0.5);
+}
+
+function exitsPortInDeclaredDirection(points: ScientificRoutePoint[], handle: string | null | undefined): boolean {
+  const normalized = handle?.toLowerCase();
+  if (!normalized || points.length < 2) return true;
+  const start = points[0];
+  const next = firstDistinctPoint(points);
+  if (!next) return true;
+  if (normalized === 'left') return next.x <= start.x + 0.5;
+  if (normalized === 'right') return next.x >= start.x - 0.5;
+  if (normalized === 'top') return next.y <= start.y + 0.5;
+  if (normalized === 'bottom') return next.y >= start.y - 0.5;
+  return true;
+}
+
+function entersPortFromOutside(points: ScientificRoutePoint[], handle: string | null | undefined): boolean {
+  const normalized = handle?.toLowerCase();
+  if (!normalized || points.length < 2) return true;
+  const target = points.at(-1)!;
+  const previous = firstDistinctPoint(points, true);
+  if (!previous) return true;
+  if (normalized === 'left') return previous.x <= target.x + 0.5;
+  if (normalized === 'right') return previous.x >= target.x - 0.5;
+  if (normalized === 'top') return previous.y <= target.y + 0.5;
+  if (normalized === 'bottom') return previous.y >= target.y - 0.5;
+  return true;
+}
+
+export function auditScientificFigure(
+  nodes: FlowNode[],
+  spec?: ScientificFigureSpec,
+  edges: FlowEdge[] = [],
+): ScientificAuditIssue[] {
   const issues: ScientificAuditIssue[] = [];
   if (!spec) {
     issues.push({
@@ -527,30 +766,314 @@ export function auditScientificFigure(nodes: FlowNode[], spec?: ScientificFigure
       detail: '设置宽高和目标 DPI 后，才能计算输出像素、越界对象与有效字号。',
     });
   }
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  const contentNodes = nodes.filter((node) => !node.data.exportExcluded && node.data.scientificRole !== 'figure-background');
-  const smallText = contentNodes.filter((node) => node.data.label.trim() && node.data.fontSize * 72 / CSS_PIXELS_PER_INCH < 7);
+  const visibleNodes = nodes.filter((node) => !node.hidden && !node.data.hidden && !node.data.exportExcluded);
+  const byId = new Map(visibleNodes.map((node) => [node.id, node]));
+  const contentNodes = visibleNodes.filter((node) => node.data.scientificRole !== 'figure-background');
+  const criticalText = contentNodes.filter((node) => {
+    if (!node.data.label.trim()) return false;
+    const labelPoints = scientificUnitsToPoints(node.data.fontSize);
+    const descriptionPoints = node.data.description
+      ? scientificUnitsToPoints(Math.max(PUBLICATION_TYPOGRAPHY.edgeLabel, node.data.fontSize * 0.86))
+      : Number.POSITIVE_INFINITY;
+    const labelMinimum = node.data.schematicRole === 'annotation' ? 6 : 7;
+    return labelPoints < labelMinimum || descriptionPoints < 6;
+  });
+  if (criticalText.length) {
+    issues.push({
+      id: 'text-below-publication-minimum',
+      severity: 'error',
+      category: 'typography',
+      title: `${criticalText.length} 个文字对象低于出版字号门槛`,
+      detail: '正文不得低于 7 pt，次要注释不得低于 6 pt。请增大字号、精简内容或改用更宽的图版。',
+      nodeIds: criticalText.map((node) => node.id),
+    });
+  }
+  const smallText = contentNodes.filter((node) => (
+    node.data.label.trim()
+    && !criticalText.includes(node)
+    && node.data.schematicRole === 'annotation'
+    && scientificUnitsToPoints(node.data.fontSize) < 7
+  ));
   if (smallText.length) {
     issues.push({
       id: 'small-text',
       severity: 'warning',
       category: 'typography',
-      title: `${smallText.length} 个文字对象小于 7 pt`,
-      detail: '缩印后可能难以阅读；请按最终图版尺寸人工核对正文、坐标轴和图例。',
+      title: `${smallText.length} 个文字对象介于 6-7 pt`,
+      detail: '达到最低可读线但低于正文目标；建议用于次要注释，不要承载主要方法信息。',
       nodeIds: smallText.map((node) => node.id),
     });
   }
-  const thinStroke = contentNodes.filter((node) => node.data.stroke !== 'none' && node.data.stroke !== 'transparent' && node.data.borderWidth * 72 / CSS_PIXELS_PER_INCH < 0.5);
-  if (thinStroke.length) {
+  const strokedNodes = contentNodes.filter((node) => !['none', 'transparent'].includes(node.data.stroke));
+  const criticalStroke = strokedNodes.filter((node) => scientificUnitsToPoints(node.data.borderWidth) < 0.6);
+  if (criticalStroke.length) {
     issues.push({
-      id: 'thin-stroke',
-      severity: 'warning',
+      id: 'stroke-below-0.6pt',
+      severity: 'error',
       category: 'stroke',
-      title: `${thinStroke.length} 个对象线宽小于 0.5 pt`,
-      detail: '细线在缩印、PDF 栅格化或印刷中可能消失。',
-      nodeIds: thinStroke.map((node) => node.id),
+      title: `${criticalStroke.length} 个对象线宽小于 0.6 pt`,
+      detail: '线条可能在缩印、PDF 栅格化或印刷中消失，已阻止科研图版导出。',
+      nodeIds: criticalStroke.map((node) => node.id),
     });
   }
+  const thinStroke = strokedNodes.filter((node) => (
+    !criticalStroke.includes(node) && scientificUnitsToPoints(node.data.borderWidth) < 0.8
+  ));
+  if (thinStroke.length) issues.push({
+    id: 'thin-stroke',
+    severity: 'warning',
+    category: 'stroke',
+    title: `${thinStroke.length} 个对象线宽介于 0.6-0.8 pt`,
+    detail: '满足最低线宽但低于主轮廓目标，建议仅用于辅助边界。',
+    nodeIds: thinStroke.map((node) => node.id),
+  });
+
+  const visibleEdges = edges.filter((edge) => !edge.hidden);
+  const invalidEdges = visibleEdges.filter((edge) => !byId.has(edge.source) || !byId.has(edge.target));
+  if (invalidEdges.length) issues.push({
+    id: 'invalid-edge-endpoint',
+    severity: 'error',
+    category: 'layout',
+    title: `${invalidEdges.length} 条连接线缺少有效端点`,
+    detail: '连接线指向已删除、隐藏或不可导出的对象，无法保证导出后的语义完整性。',
+    edgeIds: invalidEdges.map((edge) => edge.id),
+  });
+
+  const connectedEdges = visibleEdges.filter((edge) => byId.has(edge.source) && byId.has(edge.target));
+  const criticalEdgeStroke = connectedEdges.filter((edge) => scientificUnitsToPoints(edge.data?.width ?? 1.75) < 0.6);
+  if (criticalEdgeStroke.length) issues.push({
+    id: 'edge-stroke-below-0.6pt',
+    severity: 'error',
+    category: 'stroke',
+    title: `${criticalEdgeStroke.length} 条连接线小于 0.6 pt`,
+    detail: '连接线可能在缩印、灰度打印或 PDF 栅格化后消失，已阻止科研图版导出。',
+    edgeIds: criticalEdgeStroke.map((edge) => edge.id),
+  });
+  const thinEdges = connectedEdges.filter((edge) => (
+    !criticalEdgeStroke.includes(edge)
+    && scientificUnitsToPoints(edge.data?.width ?? 1.75) < 0.8
+  ));
+  if (thinEdges.length) issues.push({
+    id: 'thin-edge-stroke',
+    severity: 'warning',
+    category: 'stroke',
+    title: `${thinEdges.length} 条连接线介于 0.6-0.8 pt`,
+    detail: '这些线仅适合作为次要、可选或监督路径；主数据流和控制流应达到 0.8 pt。',
+    edgeIds: thinEdges.map((edge) => edge.id),
+  });
+
+  const edgeRoutes = connectedEdges.map((edge) => {
+    const sourceBox = auditBox(byId.get(edge.source)!, byId);
+    const targetBox = auditBox(byId.get(edge.target)!, byId);
+    const source = scientificConnectionPoint(sourceBox, edge.sourceHandle, targetBox);
+    const target = scientificConnectionPoint(targetBox, edge.targetHandle, sourceBox);
+    return { edge, route: routeScientificEdge(edge, source, target) };
+  });
+  const phaseNodes = contentNodes.filter((node) => node.data.schematicRole === 'phase' && node.data.label.trim());
+  const phaseCollisionNodeIds = new Set<string>();
+  const phaseCollisionEdgeIds = new Set<string>();
+  for (const phase of phaseNodes) {
+    const heading = phaseHeadingBox(phase, byId);
+    for (const node of contentNodes) {
+      if (node.id === phase.id || ['frame', 'phase'].includes(node.data.schematicRole ?? '')) continue;
+      if (overlapArea(heading, auditBox(node, byId)) > 4) {
+        phaseCollisionNodeIds.add(phase.id);
+        phaseCollisionNodeIds.add(node.id);
+      }
+    }
+    for (const { edge, route } of edgeRoutes) {
+      if (routeSegments(route.points).some(([start, end]) => segmentIntersectsBox(start, end, heading, 0))) {
+        phaseCollisionNodeIds.add(phase.id);
+        phaseCollisionEdgeIds.add(edge.id);
+      }
+    }
+  }
+  if (phaseCollisionNodeIds.size) issues.push({
+    id: 'phase-heading-collision',
+    severity: 'error',
+    category: 'layout',
+    title: `${phaseCollisionNodeIds.size} 个对象或阶段标题发生碰撞`,
+    detail: '阶段标题必须拥有独立安全区；节点和连接线不得穿过标题文字。请缩短标题、下移内容或调整跨阶段路由。',
+    nodeIds: [...phaseCollisionNodeIds],
+    edgeIds: [...phaseCollisionEdgeIds],
+  });
+  const invalidPortEdges = edgeRoutes.filter(({ edge, route }) => (
+    !exitsPortInDeclaredDirection(route.points, edge.sourceHandle)
+    || !entersPortFromOutside(route.points, edge.targetHandle)
+  ));
+  if (invalidPortEdges.length) issues.push({
+    id: 'edge-port-direction',
+    severity: 'error',
+    category: 'layout',
+    title: `${invalidPortEdges.length} 条连接线从错误方向进出端口`,
+    detail: '连线必须沿声明端口的外侧进入或离开；从图形内部折返会遮挡内容并误导端口归属。',
+    edgeIds: invalidPortEdges.map(({ edge }) => edge.id),
+  });
+
+  const collinearEdgeIds = new Set<string>();
+  for (let leftIndex = 0; leftIndex < edgeRoutes.length; leftIndex += 1) {
+    const left = edgeRoutes[leftIndex];
+    for (let rightIndex = leftIndex + 1; rightIndex < edgeRoutes.length; rightIndex += 1) {
+      const right = edgeRoutes[rightIndex];
+      const overlap = routeSegments(left.route.points).some(([leftStart, leftEnd]) => (
+        routeSegments(right.route.points).some(([rightStart, rightEnd]) => (
+          collinearOverlapLength(leftStart, leftEnd, rightStart, rightEnd) > 12
+        ))
+      ));
+      if (overlap) {
+        collinearEdgeIds.add(left.edge.id);
+        collinearEdgeIds.add(right.edge.id);
+      }
+    }
+  }
+  if (collinearEdgeIds.size) issues.push({
+    id: 'edge-collinear-overlap',
+    severity: 'error',
+    category: 'layout',
+    title: `${collinearEdgeIds.size} 条连接线存在长距离共线重叠`,
+    detail: '不同科学关系不能覆盖在同一线段上；请使用显式汇流点、总线或从端口立即分离的路径。',
+    edgeIds: [...collinearEdgeIds],
+  });
+  const obstacleNodes = contentNodes.filter((node) => (
+    !['frame', 'phase'].includes(node.data.schematicRole ?? '')
+    && node.data.scientificRole !== 'panel-guide'
+  ));
+  const throughEdgeIds = new Set<string>();
+  const throughNodeIds = new Set<string>();
+  for (const { edge, route } of edgeRoutes) {
+    for (const node of obstacleNodes) {
+      if (node.id === edge.source || node.id === edge.target) continue;
+      const box = auditBox(node, byId);
+      if (routeSegments(route.points).some(([start, end]) => segmentIntersectsBox(start, end, box))) {
+        throughEdgeIds.add(edge.id);
+        throughNodeIds.add(node.id);
+      }
+    }
+  }
+  if (throughEdgeIds.size) issues.push({
+    id: 'edge-through-node',
+    severity: 'error',
+    category: 'layout',
+    title: `${throughEdgeIds.size} 条连接线穿过前景对象`,
+    detail: '连线与非端点模块相交，会造成端口归属和阅读顺序歧义；请改用外围路由、汇流点或重新分区。',
+    nodeIds: [...throughNodeIds],
+    edgeIds: [...throughEdgeIds],
+  });
+
+  const crossingEdgeIds = new Set<string>();
+  for (let leftIndex = 0; leftIndex < edgeRoutes.length; leftIndex += 1) {
+    const left = edgeRoutes[leftIndex];
+    for (let rightIndex = leftIndex + 1; rightIndex < edgeRoutes.length; rightIndex += 1) {
+      const right = edgeRoutes[rightIndex];
+      if ([right.edge.source, right.edge.target].includes(left.edge.source)
+        || [right.edge.source, right.edge.target].includes(left.edge.target)) continue;
+      const crosses = routeSegments(left.route.points).some(([leftStart, leftEnd]) => (
+        routeSegments(right.route.points).some(([rightStart, rightEnd]) => (
+          segmentsCross(leftStart, leftEnd, rightStart, rightEnd)
+        ))
+      ));
+      if (crosses) {
+        crossingEdgeIds.add(left.edge.id);
+        crossingEdgeIds.add(right.edge.id);
+      }
+    }
+  }
+  if (crossingEdgeIds.size) issues.push({
+    id: 'edge-crossings',
+    severity: 'warning',
+    category: 'layout',
+    title: `${crossingEdgeIds.size} 条连接线存在非必要交叉`,
+    detail: '交叉不会阻止导出，但建议通过共享汇流点、端口调整或阶段重排消除。',
+    edgeIds: [...crossingEdgeIds],
+  });
+
+  const lowTextContrast = contentNodes.filter((node) => {
+    if (!node.data.label.trim() || ['transparent', 'none'].includes(node.data.textColor)) return false;
+    const background = ['transparent', 'none'].includes(node.data.fill) ? '#ffffff' : node.data.fill;
+    const ratio = contrastRatio(node.data.textColor, background);
+    return ratio !== undefined && ratio < 4.5;
+  });
+  if (lowTextContrast.length) issues.push({
+    id: 'low-text-contrast',
+    severity: 'error',
+    category: 'color',
+    title: `${lowTextContrast.length} 个对象的文字对比度低于 4.5:1`,
+    detail: '文字与填充色的对比不足，彩色屏幕、灰度打印和低视力阅读均可能失真。',
+    nodeIds: lowTextContrast.map((node) => node.id),
+  });
+
+  const lowBoundaryContrast = contentNodes.filter((node) => {
+    if (['frame', 'phase'].includes(node.data.schematicRole ?? '')) return false;
+    if (['transparent', 'none'].includes(node.data.stroke) || ['transparent', 'none'].includes(node.data.fill)) return false;
+    const ratio = contrastRatio(node.data.stroke, node.data.fill);
+    return ratio !== undefined && ratio < 3;
+  });
+  if (lowBoundaryContrast.length) issues.push({
+    id: 'low-boundary-contrast',
+    severity: 'warning',
+    category: 'color',
+    title: `${lowBoundaryContrast.length} 个图形边界对比度低于 3:1`,
+    detail: '非文字边界在投影、灰度或色觉缺陷条件下可能不够清晰。',
+    nodeIds: lowBoundaryContrast.map((node) => node.id),
+  });
+
+  const textOverflow = contentNodes.filter((node) => {
+    if (!node.data.label.trim() || node.data.kind === 'vector' || node.data.kind === 'image') return false;
+    const box = auditBox(node, byId);
+    const definition = getShapeDefinition(node.data.kind);
+    const width = Math.max(1, box.width - (definition.textPlacement === 'lane' ? box.width * 0.87 : 24));
+    const labelLines = estimatedLineCount(node.data.label, width, node.data.fontSize);
+    const descriptionFontSize = Math.max(PUBLICATION_TYPOGRAPHY.edgeLabel, node.data.fontSize * 0.86);
+    const descriptionLines = node.data.description
+      ? Math.min(2, estimatedLineCount(node.data.description, width, descriptionFontSize))
+      : 0;
+    const labelHeight = node.data.fontSize * 1.1
+      + Math.max(0, labelLines - 1) * node.data.fontSize * 1.18;
+    const descriptionHeight = descriptionLines
+      ? descriptionFontSize * 1.1
+        + Math.max(0, descriptionLines - 1) * descriptionFontSize * 1.18
+      : 0;
+    const requiredHeight = labelHeight
+      + descriptionHeight
+      + (descriptionLines ? Math.max(3, node.data.fontSize * 0.16) : 0);
+    const impossibleWidth = estimateSvgTextWidth(node.data.label.replace(/\s+/g, ''), node.data.fontSize) > width * 3.2;
+    return impossibleWidth || requiredHeight > box.height;
+  });
+  if (textOverflow.length) issues.push({
+    id: 'text-overflow',
+    severity: 'error',
+    category: 'typography',
+    title: `${textOverflow.length} 个对象无法容纳当前文字`,
+    detail: '标签或注释会被裁切或与相邻内容碰撞。请增大对象、缩短文字或改用更宽的布局。',
+    nodeIds: textOverflow.map((node) => node.id),
+  });
+
+  const overlapCandidates = contentNodes.filter((node) => (
+    !node.parentId
+    && !['frame', 'phase'].includes(node.data.schematicRole ?? '')
+    && node.data.scientificRole !== 'panel-guide'
+  ));
+  const overlapIds = new Set<string>();
+  for (let leftIndex = 0; leftIndex < overlapCandidates.length; leftIndex += 1) {
+    const left = auditBox(overlapCandidates[leftIndex], byId);
+    for (let rightIndex = leftIndex + 1; rightIndex < overlapCandidates.length; rightIndex += 1) {
+      const right = auditBox(overlapCandidates[rightIndex], byId);
+      const intersection = overlapArea(left, right);
+      const threshold = Math.max(36, Math.min(left.width * left.height, right.width * right.height) * 0.04);
+      if (intersection > threshold) {
+        overlapIds.add(left.id);
+        overlapIds.add(right.id);
+      }
+    }
+  }
+  if (overlapIds.size) issues.push({
+    id: 'object-overlap',
+    severity: 'error',
+    category: 'layout',
+    title: `${overlapIds.size} 个前景对象发生实质重叠`,
+    detail: '前景对象的边界相交，可能造成遮挡或标签碰撞。阶段背景和分组框不计入此规则。',
+    nodeIds: [...overlapIds],
+  });
   const translucent = contentNodes.filter((node) => node.data.opacity < 1);
   if (translucent.length) {
     issues.push({
@@ -566,13 +1089,45 @@ export function auditScientificFigure(nodes: FlowNode[], spec?: ScientificFigure
   if (raster.length) {
     issues.push({
       id: 'raster-resolution',
-      severity: 'warning',
+      severity: 'error',
       category: 'raster',
       title: `${raster.length} 个位图对象需要核对有效 DPI`,
-      detail: '当前文件未记录全部原始像素尺寸，无法自动证明位图满足投稿要求。',
+      detail: '当前文件未记录全部原始像素尺寸，无法证明有效 DPI，已阻止科研图版导出。',
       nodeIds: raster.map((node) => node.id),
     });
   }
+  const resultLikeNodes = contentNodes.filter((node) => isResultLikeScientificNode(node.data));
+  const unclassifiedResults = resultLikeNodes.filter((node) => !node.data.scientificEvidence);
+  if (unclassifiedResults.length) issues.push({
+    id: 'unclassified-scientific-evidence',
+    severity: 'error',
+    category: 'data',
+    title: `${unclassifiedResults.length} 个结果型图元未声明证据状态`,
+    detail: '结果型图元必须明确标记为 schematic 或 data-bound，避免装饰性曲线被误读为实验结果。',
+    nodeIds: unclassifiedResults.map((node) => node.id),
+  });
+  const literalSchematicResults = resultLikeNodes.filter((node) => (
+    node.data.scientificEvidence === 'schematic' && containsUnsupportedLiteralResult(node.data)
+  ));
+  if (literalSchematicResults.length) issues.push({
+    id: 'schematic-literal-result',
+    severity: 'error',
+    category: 'data',
+    title: `${literalSchematicResults.length} 个示意图元包含无来源数值`,
+    detail: '示意状态只能使用符号变量或方法契约；绑定原始数据、单位和统计定义后才能显示数值。',
+    nodeIds: literalSchematicResults.map((node) => node.id),
+  });
+  const incompleteBoundResults = resultLikeNodes.filter((node) => (
+    node.data.scientificEvidence === 'data-bound' && !hasCompleteScientificDataContract(node.data)
+  ));
+  if (incompleteBoundResults.length) issues.push({
+    id: 'incomplete-data-contract',
+    severity: 'error',
+    category: 'data',
+    title: `${incompleteBoundResults.length} 个数据绑定图元缺少完整契约`,
+    detail: '数据绑定结果必须保留原始数据、字段映射、单位、指标定义以及适用的不确定性定义。',
+    nodeIds: incompleteBoundResults.map((node) => node.id),
+  });
   const charts = nodes.filter((node) => node.data.scientificRole === 'chart-root');
   const missingSource = charts.filter((node) => !node.data.provenance?.sourceData);
   if (missingSource.length) {
@@ -589,13 +1144,23 @@ export function auditScientificFigure(nodes: FlowNode[], spec?: ScientificFigure
   if (undefinedError.length) {
     issues.push({
       id: 'undefined-error',
-      severity: 'warning',
+      severity: 'error',
       category: 'data',
       title: `${undefinedError.length} 个误差线图未定义误差含义`,
       detail: '请说明误差值表示 SD、SEM、置信区间或其他统计量。',
       nodeIds: undefinedError.map((node) => node.id),
     });
   }
+  const schematics = nodes.filter((node) => node.data.scientificRole === 'schematic-root');
+  const missingSchematicProvenance = schematics.filter((node) => !node.data.provenance?.schematic?.references?.length);
+  if (missingSchematicProvenance.length) issues.push({
+    id: 'missing-schematic-provenance',
+    severity: 'error',
+    category: 'data',
+    title: `${missingSchematicProvenance.length} 个示意图缺少构图来源`,
+    detail: '科研示意图必须保留模板、版式和参考论文元数据，才能追踪其构图依据。',
+    nodeIds: missingSchematicProvenance.map((node) => node.id),
+  });
   if (charts.length === 0) {
     issues.push({
       id: 'no-provenance-chart',
@@ -608,12 +1173,16 @@ export function auditScientificFigure(nodes: FlowNode[], spec?: ScientificFigure
   if (spec) {
     const width = mmToPx(spec.widthMm);
     const height = mmToPx(spec.heightMm);
+    const figureOrigin = visibleNodes.find((node) => node.data.scientificRole === 'figure-background')?.position ?? { x: 0, y: 0 };
     const outside = contentNodes.filter((node) => {
       if (node.parentId) return false;
       const position = absolutePosition(node, byId);
       const nodeWidth = numericStyle(node.style?.width, node.measured?.width ?? 1);
       const nodeHeight = numericStyle(node.style?.height, node.measured?.height ?? 1);
-      return position.x < -0.5 || position.y < -0.5 || position.x + nodeWidth > width + 0.5 || position.y + nodeHeight > height + 0.5;
+      return position.x < figureOrigin.x - 0.5
+        || position.y < figureOrigin.y - 0.5
+        || position.x + nodeWidth > figureOrigin.x + width + 0.5
+        || position.y + nodeHeight > figureOrigin.y + height + 0.5;
     });
     if (outside.length) {
       issues.push({
@@ -623,6 +1192,31 @@ export function auditScientificFigure(nodes: FlowNode[], spec?: ScientificFigure
         title: `${outside.length} 个顶层对象超出图版`,
         detail: '科研尺寸导出会裁掉图版边界之外的内容。',
         nodeIds: outside.map((node) => node.id),
+      });
+    }
+    const outsideEdgeLabels = edgeRoutes.filter(({ edge, route }) => {
+      const label = String(edge.data?.label ?? edge.label ?? '').trim();
+      if (!label) return false;
+      const fontSize = Number(edge.data?.labelFontSize ?? PUBLICATION_TYPOGRAPHY.edgeLabel);
+      const labelWidth = estimateSvgTextWidth(label, fontSize) + 12;
+      const baseline = route.label.y - fontSize * 0.35;
+      const left = route.label.x - labelWidth / 2;
+      const right = route.label.x + labelWidth / 2;
+      const top = baseline - fontSize * 0.86 - 3;
+      const bottom = baseline + fontSize * 0.24 + 3;
+      return left < figureOrigin.x - 0.5
+        || top < figureOrigin.y - 0.5
+        || right > figureOrigin.x + width + 0.5
+        || bottom > figureOrigin.y + height + 0.5;
+    });
+    if (outsideEdgeLabels.length) {
+      issues.push({
+        id: 'edge-label-outside-figure',
+        severity: 'error',
+        category: 'layout',
+        title: `${outsideEdgeLabels.length} 个连接标签超出图版`,
+        detail: '连接标签会在 SVG、PNG 或 PDF 导出时被裁切；请调整回路方向、标签位置或删去重复标签。',
+        edgeIds: outsideEdgeLabels.map(({ edge }) => edge.id),
       });
     }
     const pixelWidth = Math.round(spec.widthMm / MILLIMETERS_PER_INCH * spec.dpi);

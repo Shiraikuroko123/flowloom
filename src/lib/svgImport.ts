@@ -1,6 +1,6 @@
 import { svgPathBbox } from 'svg-path-bbox';
-import type { FlowNode, SvgPrimitiveTag, SvgVectorElement } from '../types';
-import { createFlowNode, estimateSvgTextWidth } from './diagram';
+import type { FlowEdge, FlowNode, SvgPrimitiveTag, SvgVectorElement } from '../types';
+import { createFlowNode, estimateSvgTextWidth, normalizeGraph } from './diagram';
 import { createId } from './id';
 
 type Matrix = [number, number, number, number, number, number];
@@ -8,6 +8,7 @@ type Bounds = { x: number; y: number; width: number; height: number };
 
 export interface EditableSvgResult {
   nodes: FlowNode[];
+  edges: FlowEdge[];
   warnings: string[];
   unsupportedCount: number;
   sourceBounds: Bounds;
@@ -497,6 +498,34 @@ export function parseEditableSvg(source: string, sourceName: string): EditableSv
   if (root.localName !== 'svg') throw new Error('文件不包含有效的 SVG 根元素。');
 
   const warnings: string[] = [];
+  const metadataText = Array.from(document.getElementsByTagName('metadata'))
+    .map((element) => element.textContent?.trim() ?? '')
+    .find(Boolean);
+  if (metadataText) {
+    try {
+      const metadata = JSON.parse(metadataText) as {
+        flowloom?: { version?: unknown; nodes?: unknown; edges?: unknown };
+      };
+      if (metadata.flowloom?.version === 2
+        && Array.isArray(metadata.flowloom.nodes)
+        && Array.isArray(metadata.flowloom.edges)) {
+        const graph = normalizeGraph(
+          metadata.flowloom.nodes as FlowNode[],
+          metadata.flowloom.edges as FlowEdge[],
+        );
+        if (graph.nodes.length > 0) {
+          return {
+            ...graph,
+            warnings: [`已从 Flowloom SVG 元数据恢复 ${graph.nodes.length} 个原生节点和 ${graph.edges.length} 条连接。`],
+            unsupportedCount: 0,
+            sourceBounds: sourceViewportBounds(root),
+          };
+        }
+      }
+    } catch {
+      warnings.push('Flowloom SVG 元数据损坏，已回退到基础矢量图元解析。');
+    }
+  }
   let unsupportedCount = 0;
   for (const selector of UNSUPPORTED_SELECTORS) {
     const count = document.getElementsByTagName(selector).length;
@@ -534,5 +563,5 @@ export function parseEditableSvg(source: string, sourceName: string): EditableSv
   if (unsupportedCount > 0) {
     warnings.push(`检测到 ${unsupportedCount} 个滤镜、蒙版、渐变、动画、样式表或其他高级特性；已保留隐藏的原图参考层。`);
   }
-  return { nodes, warnings, unsupportedCount, sourceBounds: sourceViewportBounds(root) };
+  return { nodes, edges: [], warnings, unsupportedCount, sourceBounds: sourceViewportBounds(root) };
 }

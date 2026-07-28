@@ -116,6 +116,26 @@ export const SHAPE_KINDS = [
   'scientific-mini-plot',
   'scientific-action-chunk',
   'scientific-loss-target',
+  'scientific-scene-frame',
+  'scientific-feature-map',
+  'scientific-attention-map',
+  'scientific-embedding-space',
+  'scientific-probability-bars',
+  'scientific-uncertainty-band',
+  'scientific-metric-panel',
+  'scientific-ablation-table',
+  'scientific-decision-gate',
+  'scientific-prompt-card',
+  'scientific-preference-pair',
+  'scientific-data-funnel',
+  'scientific-legend',
+  'scientific-equation',
+  'scientific-tensor',
+  'scientific-zoom-inset',
+  'scientific-task-object',
+  'scientific-goal-region',
+  'scientific-contact-point',
+  'scientific-release-gate',
   'vector',
   'image',
 ] as const;
@@ -166,6 +186,36 @@ export type ScientificSchematicTemplateId =
 export type ScientificSchematicStyle = 'conference' | 'technical' | 'monochrome';
 export type ScientificSchematicDensity = 'compact' | 'standard' | 'detailed';
 export type ScientificSchematicLanguage = 'en' | 'zh';
+export type ScientificSchematicLayout = 'freeform' | 'single-column' | 'double-column' | 'presentation';
+export type ScientificEvidenceState = 'schematic' | 'data-bound';
+export type ScientificConnectorSemantic = 'data' | 'control' | 'gradient' | 'feedback' | 'optional' | 'broadcast' | 'temporal';
+export type ScientificRouteSide = 'left' | 'right' | 'bottom-left' | 'bottom-right';
+export type ScientificVisualVariant =
+  | 'default'
+  | 'multiview'
+  | 'success'
+  | 'collision'
+  | 'uncertain'
+  | 'execution'
+  | 'state-vector'
+  | 'telemetry'
+  | 'vlm'
+  | 'world-model'
+  | 'base-model'
+  | 'aligned-model'
+  | 'checkpoint'
+  | 'diffusion-action'
+  | 'action-horizon'
+  | 'next-token'
+  | 'preference-objective'
+  | 'risk-ranking'
+  | 'capability-safety'
+  | 'prediction-error'
+  | 'object-cube'
+  | 'object-cylinder'
+  | 'goal-bin'
+  | 'force-contact'
+  | 'release-gate';
 
 export interface ScientificSchematicOptions {
   templateId: ScientificSchematicTemplateId;
@@ -228,7 +278,19 @@ export interface ScientificProvenance {
     references?: string[];
     generatedBy: 'template' | 'ai';
     prompt?: string;
+    layout?: ScientificSchematicLayout;
+    targetWidthMm?: number;
+    targetHeightMm?: number;
   };
+}
+
+export interface ScientificDataContract {
+  sourceName: string;
+  fields: string[];
+  units?: Record<string, string>;
+  sampleSize?: number | string;
+  metricDefinition?: string;
+  uncertaintyDefinition?: string;
 }
 
 export interface ScientificAuditIssue {
@@ -238,6 +300,7 @@ export interface ScientificAuditIssue {
   title: string;
   detail: string;
   nodeIds?: string[];
+  edgeIds?: string[];
 }
 
 export interface SvgVectorElement {
@@ -273,6 +336,11 @@ export interface FlowNodeData extends Record<string, unknown> {
   scientificRole?: ScientificRole;
   schematicRole?: ScientificSchematicRole;
   schematicDetail?: ScientificSchematicDensity;
+  scientificTextPaddingX?: number;
+  scientificTextPaddingY?: number;
+  scientificVariant?: ScientificVisualVariant;
+  scientificEvidence?: ScientificEvidenceState;
+  scientificDataContract?: ScientificDataContract;
   exportExcluded?: boolean;
   locked?: boolean;
 }
@@ -285,6 +353,10 @@ export interface FlowEdgeData extends Record<string, unknown> {
   routing: EdgeRouting;
   arrowStart: ArrowHead;
   arrowEnd: ArrowHead;
+  scientificSemantic?: ScientificConnectorSemantic;
+  routeSide?: ScientificRouteSide;
+  routeOffset?: number;
+  labelFontSize?: number;
 }
 
 export type FlowNode = Node<FlowNodeData, 'flowNode'>;

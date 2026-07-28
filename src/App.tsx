@@ -67,6 +67,7 @@ import type {
   ToastMessage,
 } from './types';
 import { FlowNode as FlowNodeComponent } from './components/FlowNode';
+import { ScientificEdge } from './components/ScientificEdge';
 import { IconButton } from './components/IconButton';
 import { LibraryPanel } from './components/LibraryPanel';
 import { Inspector } from './components/Inspector';
@@ -77,13 +78,14 @@ import { useFlowStore } from './store/flowStore';
 import { createFlowNode, findOpenGraphPosition, findOpenNodePosition, getFlowNodesBounds } from './lib/diagram';
 import { createId } from './lib/id';
 import { getShapeDefinition, isShapeKind } from './lib/shapeRegistry';
-import type { EditableScientificChart } from './lib/scientific';
+import { auditScientificFigure, type EditableScientificChart } from './lib/scientific';
 import type { EditableScientificSchematic } from './lib/scientificSchematics';
 
 const DRAFT_KEY = 'flowloom.document.v2';
 const LEGACY_DRAFT_KEY = 'flowloom.document.v1';
 const MOBILE_VIEWPORT_QUERY = '(max-width: 900px)';
 const nodeTypes = { flowNode: FlowNodeComponent };
+const edgeTypes = { scientific: ScientificEdge };
 const AiDialog = lazy(() => import('./components/AiDialog').then((module) => ({ default: module.AiDialog })));
 const ImportDialog = lazy(() => import('./components/ImportDialog').then((module) => ({ default: module.ImportDialog })));
 const CodeDialog = lazy(() => import('./components/CodeDialog').then((module) => ({ default: module.CodeDialog })));
@@ -520,6 +522,19 @@ function EditorApp() {
       addToast({ tone: 'warning', title: '画布为空，无法导出' });
       return;
     }
+    if (activeScientificFigure) {
+      const blockers = auditScientificFigure(nodes, activeScientificFigure, edges)
+        .filter((issue) => issue.severity === 'error');
+      if (blockers.length) {
+        addToast({
+          tone: 'error',
+          title: '科研图版未通过导出检查',
+          detail: `${blockers.length} 项关键问题：${blockers.slice(0, 2).map((issue) => issue.title).join('；')}`,
+        });
+        setScientificOpen(true);
+        return;
+      }
+    }
     const viewportElement = canvasRef.current?.querySelector('.react-flow__viewport') as HTMLElement | null;
     if (!viewportElement) return;
     setExporting(true);
@@ -622,6 +637,39 @@ function EditorApp() {
           anchor.download = fileName('svg');
           anchor.click();
         }
+      } else if (format === 'pdf' && activeScientificFigure && scientificBounds) {
+        const [{ jsPDF }] = await Promise.all([
+          import('jspdf'),
+          import('svg2pdf.js'),
+        ]);
+        const {
+          preparePublicationSvgForPdf,
+          registerPublicationPdfFonts,
+          serializePublicationSvg,
+        } = await import('./lib/scientificExport');
+        const pdfSpec: ScientificFigureSpec = { ...activeScientificFigure, background: '#ffffff' };
+        const svgSource = serializePublicationSvg(title, renderedNodes, renderedEdges, pdfSpec);
+        const svgDocument = new DOMParser().parseFromString(svgSource, 'image/svg+xml');
+        const parserError = svgDocument.querySelector('parsererror');
+        if (parserError) throw new Error('原生 SVG 无法转换为矢量 PDF。');
+        const pdfWidth = activeScientificFigure.widthMm;
+        const pdfHeight = activeScientificFigure.heightMm;
+        const pdf = new jsPDF({
+          orientation: pdfWidth >= pdfHeight ? 'landscape' : 'portrait',
+          unit: 'mm',
+          format: [pdfWidth, pdfHeight],
+          putOnlyUsedFonts: true,
+        });
+        pdf.setProperties({ title, creator: 'Flowloom', subject: 'Editable scientific figure export' });
+        await registerPublicationPdfFonts(pdf);
+        preparePublicationSvgForPdf(svgDocument.documentElement as unknown as SVGSVGElement, pdfSpec);
+        await pdf.svg(svgDocument.documentElement as unknown as SVGElement, {
+          x: 0,
+          y: 0,
+          width: pdfWidth,
+          height: pdfHeight,
+        });
+        pdf.save(fileName('pdf'));
       } else {
         const dataUrl = await toPng(viewportElement, options);
         if (format === 'png') {
@@ -658,7 +706,7 @@ function EditorApp() {
       setExporting(false);
       canvasRef.current?.classList.remove('is-exporting');
     }
-  }, [activeScientificFigure, addToast, fileName, nodes, renderedEdges, renderedNodes, theme, title]);
+  }, [activeScientificFigure, addToast, edges, fileName, nodes, renderedEdges, renderedNodes, theme, title]);
 
   const copySelection = useCallback(async () => {
     const selectedNodes = nodes.filter((node) => node.selected);
@@ -815,6 +863,7 @@ function EditorApp() {
           nodes={renderedNodes}
           edges={renderedEdges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
@@ -896,6 +945,7 @@ function EditorApp() {
         <ScientificDialog
           open={scientificOpen}
           nodes={nodes}
+          edges={edges}
           figure={activeScientificFigure}
           onClose={() => setScientificOpen(false)}
           onConfigureFigure={applyScientificFigure}
