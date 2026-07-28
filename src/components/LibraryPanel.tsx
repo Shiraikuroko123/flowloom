@@ -1,35 +1,21 @@
 import { useMemo, useState, type DragEvent } from 'react';
-import {
-  CircleStop,
-  Database,
-  Diamond,
-  FileInput,
-  FileText,
-  Group,
-  Image,
-  Keyboard,
-  RectangleHorizontal,
-  Search,
-  StickyNote,
-} from 'lucide-react';
+import { Search } from 'lucide-react';
 import type { ShapeKind } from '../types';
-import { SHAPE_LABELS } from '../lib/diagram';
+import {
+  SHAPE_CATEGORY_LABELS,
+  VISIBLE_SHAPES,
+  type ShapeCategory,
+} from '../lib/shapeRegistry';
 import { templates } from '../data/templates';
+import { ShapeVisual } from './ShapeVisual';
 
-const shapeIcons: Record<ShapeKind, typeof CircleStop> = {
-  start: CircleStop,
-  process: RectangleHorizontal,
-  decision: Diamond,
-  document: FileText,
-  data: FileInput,
-  database: Database,
-  manual: Keyboard,
-  note: StickyNote,
-  group: Group,
-  image: Image,
-};
-
-const primaryShapes = (Object.keys(shapeIcons) as ShapeKind[]).filter((kind) => kind !== 'image');
+const categoryOrder: Exclude<ShapeCategory, 'internal'>[] = [
+  'flowchart',
+  'bpmn',
+  'uml',
+  'basic',
+  'container',
+];
 
 interface LibraryPanelProps {
   open: boolean;
@@ -40,11 +26,24 @@ interface LibraryPanelProps {
 export function LibraryPanel({ open, onAddShape, onLoadTemplate }: LibraryPanelProps) {
   const [tab, setTab] = useState<'shapes' | 'templates'>('shapes');
   const [query, setQuery] = useState('');
+  const [openCategories, setOpenCategories] = useState<Set<ShapeCategory>>(() => new Set(['flowchart']));
+  const normalizedQuery = query.trim().toLowerCase();
+
+  const filteredShapes = useMemo(() => {
+    if (!normalizedQuery) return VISIBLE_SHAPES;
+    return VISIBLE_SHAPES.filter((definition) => (
+      `${definition.label} ${definition.standardName} ${definition.keywords.join(' ')}`
+        .toLowerCase()
+        .includes(normalizedQuery)
+    ));
+  }, [normalizedQuery]);
+
   const filteredTemplates = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return templates;
-    return templates.filter((template) => `${template.name} ${template.category} ${template.description}`.toLowerCase().includes(normalized));
-  }, [query]);
+    if (!normalizedQuery) return templates;
+    return templates.filter((template) => (
+      `${template.name} ${template.category} ${template.description}`.toLowerCase().includes(normalizedQuery)
+    ));
+  }, [normalizedQuery]);
 
   const handleDragStart = (event: DragEvent<HTMLButtonElement>, kind: ShapeKind) => {
     event.dataTransfer.setData('application/flowloom-shape', kind);
@@ -67,33 +66,70 @@ export function LibraryPanel({ open, onAddShape, onLoadTemplate }: LibraryPanelP
         </button>
       </div>
 
+      <div className="library-search">
+        <label className="search-field">
+          <Search size={15} aria-hidden="true" />
+          <span className="sr-only">{tab === 'shapes' ? '搜索图形' : '搜索模板'}</span>
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={tab === 'shapes' ? '搜索名称、标准或用途' : '搜索模板'}
+          />
+        </label>
+        <span className="library-search__count">
+          {tab === 'shapes' ? `${filteredShapes.length} 个图形` : `${filteredTemplates.length} 个模板`}
+        </span>
+      </div>
+
       {tab === 'shapes' ? (
-        <div className="library-panel__body">
-          <div className="shape-grid">
-            {primaryShapes.map((kind) => {
-              const ShapeIcon = shapeIcons[kind];
-              return (
-                <button
-                  key={kind}
-                  className="shape-item"
-                  draggable
-                  onDragStart={(event) => handleDragStart(event, kind)}
-                  onClick={() => onAddShape(kind)}
-                >
-                  <span className={`shape-item__preview shape-item__preview--${kind}`}><ShapeIcon size={21} aria-hidden="true" /></span>
-                  <span>{SHAPE_LABELS[kind]}</span>
-                </button>
-              );
-            })}
-          </div>
+        <div className="library-panel__body library-panel__body--shapes">
+          {categoryOrder.map((category) => {
+            const shapes = filteredShapes.filter((definition) => definition.category === category);
+            if (shapes.length === 0) return null;
+            return (
+              <details
+                key={`${category}-${normalizedQuery ? 'search' : 'browse'}`}
+                className="shape-category"
+                open={Boolean(normalizedQuery) || openCategories.has(category)}
+                onToggle={(event) => {
+                  if (normalizedQuery) return;
+                  const expanded = event.currentTarget.open;
+                  setOpenCategories((current) => {
+                    const next = new Set(current);
+                    if (expanded) next.add(category);
+                    else next.delete(category);
+                    return next;
+                  });
+                }}
+              >
+                <summary>
+                  <span>{SHAPE_CATEGORY_LABELS[category]}</span>
+                  <small>{shapes.length}</small>
+                </summary>
+                <div className="shape-grid">
+                  {shapes.map((definition) => (
+                    <button
+                      key={definition.kind}
+                      className="shape-item"
+                      draggable
+                      title={`${definition.label} (${definition.standardName})`}
+                      onDragStart={(event) => handleDragStart(event, definition.kind)}
+                      onClick={() => onAddShape(definition.kind)}
+                    >
+                      <span className="shape-item__preview">
+                        <ShapeVisual kind={definition.kind} strokeWidth={1.25} radius={8} />
+                      </span>
+                      <span>{definition.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </details>
+            );
+          })}
+          {filteredShapes.length === 0 && <p className="panel-empty">没有匹配的图形</p>}
         </div>
       ) : (
         <div className="library-panel__body">
-          <label className="search-field">
-            <Search size={15} aria-hidden="true" />
-            <span className="sr-only">搜索模板</span>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模板" />
-          </label>
           <div className="template-list">
             {filteredTemplates.map((template) => (
               <button key={template.id} className="template-item" onClick={() => onLoadTemplate(template.id)}>

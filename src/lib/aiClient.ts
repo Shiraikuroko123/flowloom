@@ -1,11 +1,16 @@
 import type { AiDiagramRequest } from '../types';
+import { VISIBLE_SHAPES } from './shapeRegistry';
+
+const SHAPE_CATALOG = VISIBLE_SHAPES
+  .map((definition) => `${definition.kind}=${definition.label}`)
+  .join(', ');
 
 const SYSTEM_PROMPT = `You are a senior process architect. Convert the user's context into one precise editable flowchart.
 Return only a JSON object with this schema:
 {
   "title": "short diagram title",
   "direction": "TB or LR",
-  "nodes": [{"id":"stable-ascii-id","label":"concise visible label","description":"optional detail","kind":"start|process|decision|document|data|database|manual|note"}],
+  "nodes": [{"id":"stable-ascii-id","label":"concise visible label","description":"optional detail","kind":"a supported shape id"}],
   "edges": [{"source":"node-id","target":"node-id","label":"optional branch condition"}]
 }
 Rules:
@@ -14,6 +19,8 @@ Rules:
 - Decision nodes should usually have labeled outgoing branches.
 - Use 5-18 nodes unless the source requires more.
 - Preserve concrete roles, constraints, exception paths, and terminology from the source.
+- Choose the most semantically accurate standard shape. Supported shape ids: ${SHAPE_CATALOG}.
+- Prefer standard flowchart shapes unless the user explicitly requests BPMN or UML notation.
 - Do not wrap JSON in markdown fences and do not add commentary.`;
 
 function stripCodeFence(value: string): string {

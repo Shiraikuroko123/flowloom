@@ -7,6 +7,7 @@ import {
   serializeMermaid,
 } from './fileAdapters';
 import { createFlowEdge, createFlowNode } from './diagram';
+import { VISIBLE_SHAPES } from './shapeRegistry';
 
 describe('diagram file adapters', () => {
   it('imports Mermaid nodes, decisions, labels, and edges', async () => {
@@ -89,5 +90,37 @@ describe('diagram file adapters', () => {
     expect(graph.edges).toHaveLength(2);
     expect(serializeMermaid(graph.nodes, graph.edges)).toContain('|通过|');
     expect(serializeDrawio(graph.title, graph.nodes, graph.edges)).toContain('<mxGraphModel');
+  });
+
+  it('round-trips every registered editable shape through draw.io', async () => {
+    const nodes = VISIBLE_SHAPES.map((definition, index) => createFlowNode(
+      definition.kind,
+      { x: (index % 8) * 220, y: Math.floor(index / 8) * 150 },
+      definition.label,
+      { id: `shape-${index}` },
+    ));
+    nodes[0].data = {
+      ...nodes[0].data,
+      description: '保留说明；包含特殊字符',
+      fontWeight: 700,
+      textAlign: 'right',
+      verticalAlign: 'bottom',
+      locked: true,
+    };
+    const edge = createFlowEdge(nodes[0].id, nodes[1].id, '双向');
+    edge.data = { ...edge.data!, arrowStart: 'open', arrowEnd: 'closed', lineStyle: 'dotted', width: 2.5 };
+
+    const source = serializeDrawio('完整图形库', nodes, [edge]);
+    const result = await importDiagramFile(new File([source], 'all-shapes.drawio', { type: 'application/xml' }));
+
+    expect(result.nodes.map((node) => node.data.kind)).toEqual(VISIBLE_SHAPES.map((definition) => definition.kind));
+    expect(result.nodes[0].data).toMatchObject({
+      description: '保留说明；包含特殊字符',
+      fontWeight: 700,
+      textAlign: 'right',
+      verticalAlign: 'bottom',
+      locked: true,
+    });
+    expect(result.edges[0].data).toMatchObject({ arrowStart: 'open', arrowEnd: 'closed', lineStyle: 'dotted', width: 2.5 });
   });
 });

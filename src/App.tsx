@@ -71,8 +71,9 @@ import { Inspector } from './components/Inspector';
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
 import { ToastRegion } from './components/ToastRegion';
 import { useFlowStore } from './store/flowStore';
-import { createFlowNode, SHAPE_LABELS } from './lib/diagram';
+import { createFlowNode, findOpenNodePosition } from './lib/diagram';
 import { createId } from './lib/id';
+import { getShapeDefinition, isShapeKind } from './lib/shapeRegistry';
 
 const DRAFT_KEY = 'flowloom.document.v1';
 const MOBILE_VIEWPORT_QUERY = '(max-width: 900px)';
@@ -318,15 +319,17 @@ function EditorApp() {
       x: rect ? rect.left + rect.width / 2 : window.innerWidth / 2,
       y: rect ? rect.top + rect.height / 2 : window.innerHeight / 2,
     });
-    addNode(createFlowNode(kind, { x: point.x - 88, y: point.y - 36 }));
-  }, [addNode, flow]);
+    addNode(createFlowNode(kind, findOpenNodePosition(nodes, kind, point)));
+  }, [addNode, flow, nodes]);
 
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
-    const kind = event.dataTransfer.getData('application/flowloom-shape') as ShapeKind;
-    if (!Object.hasOwn(SHAPE_LABELS, kind)) return;
+    const value = event.dataTransfer.getData('application/flowloom-shape');
+    if (!isShapeKind(value)) return;
+    const kind = value;
     const point = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
-    addNode(createFlowNode(kind, point));
+    const definition = getShapeDefinition(kind);
+    addNode(createFlowNode(kind, { x: point.x - definition.width / 2, y: point.y - definition.height / 2 }));
   };
 
   const applyImport = useCallback((result: ImportResult) => {

@@ -8,7 +8,9 @@ import {
 } from '@xyflow/react';
 import { FileImage, LockKeyhole } from 'lucide-react';
 import type { FlowNode as FlowNodeType } from '../types';
+import { getShapeDefinition } from '../lib/shapeRegistry';
 import { useFlowStore } from '../store/flowStore';
+import { ShapeVisual } from './ShapeVisual';
 
 const positions = [Position.Top, Position.Right, Position.Bottom, Position.Left];
 
@@ -20,6 +22,7 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
   const beginTransaction = useFlowStore((state) => state.beginTransaction);
   const endTransaction = useFlowStore((state) => state.endTransaction);
   const updateNodeInternals = useUpdateNodeInternals();
+  const definition = getShapeDefinition(data.kind);
 
   useEffect(() => setDraft(data.label), [data.label]);
   useEffect(() => {
@@ -51,6 +54,7 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
     '--node-radius': `${data.radius}px`,
     '--node-font-size': `${data.fontSize}px`,
     '--node-font-weight': data.fontWeight,
+    '--node-text-align': data.textAlign,
     '--node-opacity': data.opacity,
   } as CSSProperties;
 
@@ -84,6 +88,12 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
     </>
   );
 
+  const verticalClass = definition.textPlacement === 'header'
+    ? 'top'
+    : definition.textPlacement === 'footer'
+      ? 'bottom'
+      : data.verticalAlign;
+
   return (
     <div
       className={`flow-node flow-node--${data.kind} ${selected ? 'is-selected' : ''} ${data.locked ? 'is-locked' : ''}`}
@@ -94,13 +104,13 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
         beginTransaction();
         setEditing(true);
       }}
-      aria-label={`${data.label}，${data.kind}`}
+      aria-label={`${data.label}，${definition.label}`}
     >
       <NodeResizer
         color="oklch(0.560 0.155 72)"
         isVisible={selected && !data.locked}
-        minWidth={data.kind === 'group' ? 220 : 72}
-        minHeight={data.kind === 'group' ? 140 : 44}
+        minWidth={definition.minWidth}
+        minHeight={definition.minHeight}
         onResizeStart={beginTransaction}
         onResizeEnd={endTransaction}
       />
@@ -114,7 +124,22 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
           isConnectable={!data.locked}
         />
       ))}
-      <div className="flow-node__content">{visualContent}</div>
+      {data.kind !== 'image' && (
+        <ShapeVisual
+          className="flow-node__shape"
+          kind={data.kind}
+          fill={data.fill}
+          stroke={data.stroke}
+          strokeWidth={data.borderWidth}
+          radius={data.radius}
+        />
+      )}
+      <div
+        className={`flow-node__content flow-node__content--${definition.textPlacement} flow-node__content--v-${verticalClass}`}
+        style={{ padding: definition.contentPadding }}
+      >
+        {visualContent}
+      </div>
       {data.locked && <LockKeyhole className="flow-node__lock" size={13} aria-hidden="true" />}
     </div>
   );

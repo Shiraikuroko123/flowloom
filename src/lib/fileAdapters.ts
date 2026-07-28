@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import pako from 'pako';
 import { parse as parseYaml } from 'yaml';
 import type {
+  ArrowHead,
   FlowEdge,
   FlowNode,
   ImportResult,
@@ -16,6 +17,7 @@ import {
   SHAPE_DIMENSIONS,
 } from './diagram';
 import { createId } from './id';
+import { getShapeDefinition, isShapeKind } from './shapeRegistry';
 
 const STRUCTURED_EXTENSIONS = new Set([
   'json',
@@ -77,17 +79,48 @@ function parseStyle(style: string | null): Record<string, string> {
   );
 }
 
+function decodeStyleValue(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 function mapMxShape(style: Record<string, string>): ShapeKind {
+  if (isShapeKind(style.flowloomKind)) return style.flowloomKind;
   const shape = `${style.shape ?? ''} ${Object.keys(style).join(' ')}`.toLowerCase();
+  if (shape.includes('multidocument')) return 'multiple-documents';
+  if (shape.includes('offpageconnector')) return 'off-page-connector';
+  if (shape.includes('manualinput')) return 'manual';
+  if (shape.includes('internalstorage')) return 'internal-storage';
+  if (shape.includes('stored_data')) return 'stored-data';
+  if (shape.includes('direct_data')) return 'direct-storage';
+  if (shape.includes('sequential_data')) return 'sequential-storage';
+  if (shape.includes('paper_tape')) return 'paper-tape';
+  if (shape.includes('loop_limit')) return 'loop-limit';
+  if (shape.includes('collate')) return 'collate';
+  if (shape.includes('display')) return 'display';
+  if (shape.includes('delay')) return 'delay';
+  if (shape.includes('hexagon')) return 'preparation';
+  if (shape.includes('umlactor')) return 'uml-actor';
+  if (shape.includes('component')) return 'uml-component';
+  if (shape.includes('folder')) return 'uml-package';
   if (shape.includes('rhombus') || shape.includes('diamond')) return 'decision';
   if (shape.includes('cylinder') || shape.includes('database')) return 'database';
   if (shape.includes('document')) return 'document';
   if (shape.includes('parallelogram') || shape.includes('data')) return 'data';
-  if (shape.includes('manual')) return 'manual';
+  if (shape.includes('trapezoid') || shape.includes('manual')) return 'manual-operation';
   if (shape.includes('note')) return 'note';
   if (shape.includes('swimlane') || shape.includes('group')) return 'group';
   if (style.ellipse === '1' || shape.includes('ellipse') || shape.includes('terminator')) return 'start';
   return 'process';
+}
+
+function mapMxArrow(value: string | undefined): 'none' | 'open' | 'closed' {
+  if (!value || value === 'none') return 'none';
+  return value.toLowerCase().includes('open') ? 'open' : 'closed';
 }
 
 function decodeDrawioPayload(payload: string): string {
@@ -143,9 +176,19 @@ function importDrawio(source: string, title: string): ImportResult {
         textColor: style.fontColor ?? node.data.textColor,
         borderWidth: Number(style.strokeWidth) || node.data.borderWidth,
         fontSize: Number(style.fontSize) || node.data.fontSize,
-        fontWeight: style.fontStyle === '1' ? 700 : node.data.fontWeight,
-        radius: style.rounded === '1' ? 10 : node.data.radius,
+        radius: style.flowloomRadius ? Number(style.flowloomRadius) : style.rounded === '1' ? 10 : node.data.radius,
+        fontWeight: style.flowloomFontWeight ? Number(style.flowloomFontWeight) : style.fontStyle === '1' ? 700 : node.data.fontWeight,
+        textAlign: style.flowloomTextAlign === 'left' || style.flowloomTextAlign === 'right'
+          ? style.flowloomTextAlign
+          : style.align === 'left' || style.align === 'right' ? style.align : 'center',
+        verticalAlign: style.flowloomVerticalAlign === 'top' || style.flowloomVerticalAlign === 'bottom'
+          ? style.flowloomVerticalAlign
+          : style.verticalAlign === 'top' || style.verticalAlign === 'bottom' ? style.verticalAlign : 'middle',
+        opacity: style.opacity ? Math.max(0.1, Math.min(1, Number(style.opacity) / 100)) : node.data.opacity,
+        description: decodeStyleValue(style.flowloomDescription),
+        locked: style.flowloomLocked === '1',
       };
+      node.draggable = !node.data.locked;
       nodes.push(node);
     }
 
@@ -164,6 +207,13 @@ function importDrawio(source: string, title: string): ImportResult {
         edge.data = { ...edge.data!, color: style.strokeColor };
         edge.style = { ...edge.style, stroke: style.strokeColor };
       }
+      edge.data = {
+        ...edge.data!,
+        width: Number(style.strokeWidth) || edge.data!.width,
+        lineStyle: style.dashed === '1' ? style.dashPattern?.startsWith('1 ') ? 'dotted' : 'dashed' : edge.data!.lineStyle,
+        arrowStart: mapMxArrow(style.startArrow),
+        arrowEnd: style.endArrow === undefined ? 'closed' : mapMxArrow(style.endArrow),
+      };
       edges.push(edge);
     }
   }
@@ -288,21 +338,27 @@ function parseBpmn(source: string): ParsedTextGraph {
   const document = new DOMParser().parseFromString(source, 'application/xml');
   if (document.querySelector('parsererror')) throw new Error('BPMN XML 无法解析。');
   const nodeTypes: Record<string, ShapeKind> = {
-    startEvent: 'start',
-    endEvent: 'start',
-    task: 'process',
-    userTask: 'manual',
-    serviceTask: 'process',
-    scriptTask: 'process',
-    sendTask: 'process',
-    receiveTask: 'process',
-    exclusiveGateway: 'decision',
-    parallelGateway: 'decision',
-    inclusiveGateway: 'decision',
-    dataObjectReference: 'data',
-    dataStoreReference: 'database',
+    startEvent: 'bpmn-start-event',
+    intermediateCatchEvent: 'bpmn-intermediate-event',
+    intermediateThrowEvent: 'bpmn-intermediate-event',
+    boundaryEvent: 'bpmn-intermediate-event',
+    endEvent: 'bpmn-end-event',
+    task: 'bpmn-task',
+    userTask: 'bpmn-user-task',
+    manualTask: 'manual-operation',
+    serviceTask: 'bpmn-service-task',
+    scriptTask: 'bpmn-task',
+    sendTask: 'bpmn-task',
+    receiveTask: 'bpmn-task',
+    exclusiveGateway: 'bpmn-exclusive-gateway',
+    parallelGateway: 'bpmn-parallel-gateway',
+    inclusiveGateway: 'bpmn-inclusive-gateway',
+    dataObjectReference: 'bpmn-data-object',
+    dataStoreReference: 'bpmn-data-store',
     textAnnotation: 'note',
     subProcess: 'group',
+    participant: 'bpmn-pool',
+    lane: 'swimlane',
   };
   const bounds = new Map<string, { x: number; y: number; width: number; height: number }>();
   for (const shape of localElements(document, 'BPMNShape')) {
@@ -701,19 +757,13 @@ function xmlEscape(value: unknown): string {
 }
 
 function mxStyle(node: FlowNode): string {
-  const shape: Record<ShapeKind, string> = {
-    start: 'ellipse',
-    process: 'rounded=1',
-    decision: 'rhombus',
-    document: 'shape=document',
-    data: 'shape=parallelogram',
-    database: 'shape=cylinder3',
-    manual: 'shape=manualInput',
-    note: 'shape=note',
-    group: 'swimlane',
-    image: 'rounded=0',
-  };
-  return `${shape[node.data.kind]};whiteSpace=wrap;html=1;fillColor=${node.data.fill};strokeColor=${node.data.stroke};fontColor=${node.data.textColor};strokeWidth=${node.data.borderWidth};fontSize=${node.data.fontSize};`;
+  const shape = getShapeDefinition(node.data.kind).drawioStyle;
+  const description = node.data.description ? encodeURIComponent(node.data.description) : '';
+  return `${shape};flowloomKind=${node.data.kind};flowloomFontWeight=${node.data.fontWeight};flowloomRadius=${node.data.radius};flowloomTextAlign=${node.data.textAlign};flowloomVerticalAlign=${node.data.verticalAlign};flowloomDescription=${description};flowloomLocked=${node.data.locked ? 1 : 0};whiteSpace=wrap;html=1;fillColor=${node.data.fill};strokeColor=${node.data.stroke};fontColor=${node.data.textColor};strokeWidth=${node.data.borderWidth};fontSize=${node.data.fontSize};fontStyle=${node.data.fontWeight >= 700 ? 1 : 0};align=${node.data.textAlign};verticalAlign=${node.data.verticalAlign};opacity=${Math.round(node.data.opacity * 100)};`;
+}
+
+function mxArrow(kind: ArrowHead | undefined): string {
+  return kind === 'none' ? 'none' : kind === 'open' ? 'open' : 'block';
 }
 
 export function serializeDrawio(title: string, nodes: FlowNode[], edges: FlowEdge[]): string {
@@ -722,25 +772,23 @@ export function serializeDrawio(title: string, nodes: FlowNode[], edges: FlowEdg
     const height = Number(node.measured?.height ?? node.height ?? node.style?.height ?? SHAPE_DIMENSIONS[node.data.kind].height);
     return `<mxCell id="${xmlEscape(node.id)}" value="${xmlEscape(node.data.label)}" style="${xmlEscape(mxStyle(node))}" vertex="1" parent="1"><mxGeometry x="${node.position.x}" y="${node.position.y}" width="${width}" height="${height}" as="geometry"/></mxCell>`;
   }).join('');
-  const edgeCells = edges.map((edge) => `<mxCell id="${xmlEscape(edge.id)}" value="${xmlEscape(edge.data?.label ?? edge.label ?? '')}" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=${xmlEscape(edge.data?.color ?? '#555555')};" edge="1" parent="1" source="${xmlEscape(edge.source)}" target="${xmlEscape(edge.target)}"><mxGeometry relative="1" as="geometry"/></mxCell>`).join('');
+  const edgeCells = edges.map((edge) => {
+    const routing = edge.data?.routing ?? 'smoothstep';
+    const routeStyle = routing === 'smoothstep' ? 'edgeStyle=orthogonalEdgeStyle;rounded=0' : routing === 'bezier' ? 'curved=1' : 'edgeStyle=none';
+    const style = `${routeStyle};html=1;strokeColor=${edge.data?.color ?? '#555555'};strokeWidth=${edge.data?.width ?? 1.75};dashed=${edge.data?.lineStyle === 'solid' ? 0 : 1};dashPattern=${edge.data?.lineStyle === 'dotted' ? '1 4' : '8 6'};startArrow=${mxArrow(edge.data?.arrowStart)};endArrow=${mxArrow(edge.data?.arrowEnd)};`;
+    return `<mxCell id="${xmlEscape(edge.id)}" value="${xmlEscape(edge.data?.label ?? edge.label ?? '')}" style="${xmlEscape(style)}" edge="1" parent="1" source="${xmlEscape(edge.source)}" target="${xmlEscape(edge.target)}"><mxGeometry relative="1" as="geometry"/></mxCell>`;
+  }).join('');
   return `<mxfile host="Flowloom" modified="${new Date().toISOString()}"><diagram id="flowloom" name="${xmlEscape(title)}"><mxGraphModel grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1169" pageHeight="827"><root><mxCell id="0"/><mxCell id="1" parent="0"/>${nodeCells}${edgeCells}</root></mxGraphModel></diagram></mxfile>`;
 }
 
 function mermaidShape(node: FlowNode): string {
   const label = node.data.label.replaceAll('"', '&quot;');
-  const shapes: Record<ShapeKind, string> = {
-    start: `(["${label}"])`,
-    process: `["${label}"]`,
-    decision: `{\"${label}\"}`,
-    document: `["${label}"]`,
-    data: `[/\"${label}\"/]`,
-    database: `[(\"${label}\")]`,
-    manual: `["${label}"]`,
-    note: `["${label}"]`,
-    group: `["${label}"]`,
-    image: `["${label}"]`,
-  };
-  return shapes[node.data.kind];
+  if (node.data.kind === 'start' || node.data.kind === 'bpmn-start-event' || node.data.kind === 'bpmn-end-event') return `(["${label}"])`;
+  if (node.data.kind === 'decision' || node.data.kind.includes('gateway')) return `{\"${label}\"}`;
+  if (node.data.kind === 'database' || node.data.kind === 'bpmn-data-store') return `[(\"${label}\")]`;
+  if (node.data.kind === 'data' || node.data.kind === 'stored-data') return `[/\"${label}\"/]`;
+  if (node.data.kind === 'ellipse' || node.data.kind === 'uml-use-case') return `(["${label}"])`;
+  return `["${label}"]`;
 }
 
 function safeDiagramId(id: string): string {
@@ -760,7 +808,17 @@ export function serializeMermaid(nodes: FlowNode[], edges: FlowEdge[], direction
 export function serializeDot(title: string, nodes: FlowNode[], edges: FlowEdge[]): string {
   const lines = [`digraph "${title.replaceAll('"', '\\"')}" {`, '  rankdir=TB;'];
   for (const node of nodes) {
-    const shape = node.data.kind === 'decision' ? 'diamond' : node.data.kind === 'start' ? 'ellipse' : node.data.kind === 'database' ? 'cylinder' : 'box';
+    const shape = node.data.kind === 'decision' || node.data.kind.includes('gateway')
+      ? 'diamond'
+      : node.data.kind === 'start' || node.data.kind === 'ellipse' || node.data.kind.includes('event') || node.data.kind === 'uml-use-case'
+        ? 'ellipse'
+        : node.data.kind === 'database' || node.data.kind === 'bpmn-data-store'
+          ? 'cylinder'
+          : node.data.kind === 'triangle' || node.data.kind === 'extract'
+            ? 'triangle'
+            : node.data.kind === 'hexagon' || node.data.kind === 'preparation'
+              ? 'hexagon'
+              : 'box';
     lines.push(`  "${node.id}" [label="${node.data.label.replaceAll('"', '\\"')}", shape=${shape}];`);
   }
   for (const edge of edges) {

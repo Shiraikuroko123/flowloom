@@ -1,19 +1,74 @@
 import type { Edge, Node, XYPosition } from '@xyflow/react';
 
-export type ShapeKind =
-  | 'start'
-  | 'process'
-  | 'decision'
-  | 'document'
-  | 'data'
-  | 'database'
-  | 'manual'
-  | 'note'
-  | 'group'
-  | 'image';
+export const SHAPE_KINDS = [
+  'start',
+  'process',
+  'decision',
+  'document',
+  'data',
+  'database',
+  'manual',
+  'multiple-documents',
+  'predefined-process',
+  'preparation',
+  'manual-operation',
+  'stored-data',
+  'internal-storage',
+  'display',
+  'delay',
+  'on-page-connector',
+  'off-page-connector',
+  'merge',
+  'extract',
+  'sort',
+  'collate',
+  'summing-junction',
+  'or-junction',
+  'sequential-storage',
+  'direct-storage',
+  'paper-tape',
+  'punched-card',
+  'loop-limit',
+  'annotation',
+  'bpmn-start-event',
+  'bpmn-intermediate-event',
+  'bpmn-end-event',
+  'bpmn-task',
+  'bpmn-user-task',
+  'bpmn-service-task',
+  'bpmn-exclusive-gateway',
+  'bpmn-parallel-gateway',
+  'bpmn-inclusive-gateway',
+  'bpmn-data-object',
+  'bpmn-data-store',
+  'bpmn-pool',
+  'uml-actor',
+  'uml-use-case',
+  'uml-class',
+  'uml-package',
+  'uml-component',
+  'uml-state',
+  'uml-note',
+  'rectangle',
+  'rounded-rectangle',
+  'ellipse',
+  'triangle',
+  'hexagon',
+  'cloud',
+  'callout',
+  'note',
+  'group',
+  'swimlane',
+  'image',
+] as const;
+
+export type ShapeKind = (typeof SHAPE_KINDS)[number];
 
 export type EdgeRouting = 'smoothstep' | 'straight' | 'bezier';
 export type LineStyle = 'solid' | 'dashed' | 'dotted';
+export type ArrowHead = 'none' | 'open' | 'closed';
+export type TextAlign = 'left' | 'center' | 'right';
+export type VerticalAlign = 'top' | 'middle' | 'bottom';
 export type FidelityLevel = 'structural' | 'hybrid' | 'visual';
 
 export interface FlowNodeData extends Record<string, unknown> {
@@ -27,6 +82,8 @@ export interface FlowNodeData extends Record<string, unknown> {
   radius: number;
   fontSize: number;
   fontWeight: number;
+  textAlign: TextAlign;
+  verticalAlign: VerticalAlign;
   opacity: number;
   imageUrl?: string;
   sourceRef?: string;
@@ -39,6 +96,8 @@ export interface FlowEdgeData extends Record<string, unknown> {
   width: number;
   lineStyle: LineStyle;
   routing: EdgeRouting;
+  arrowStart: ArrowHead;
+  arrowEnd: ArrowHead;
 }
 
 export type FlowNode = Node<FlowNodeData, 'flowNode'>;

@@ -2,7 +2,6 @@ import {
   addEdge,
   applyEdgeChanges,
   applyNodeChanges,
-  MarkerType,
   type Connection,
   type EdgeChange,
   type NodeChange,
@@ -10,7 +9,7 @@ import {
 } from '@xyflow/react';
 import { create } from 'zustand';
 import type { DiagramDocument, FlowEdge, FlowEdgeData, FlowNode, FlowNodeData } from '../types';
-import { cloneGraph, createFlowEdge, layoutGraph, normalizeGraph } from '../lib/diagram';
+import { cloneGraph, createEdgeMarker, createFlowEdge, layoutGraph, normalizeGraph } from '../lib/diagram';
 import { getTemplate } from '../data/templates';
 
 interface Snapshot {
@@ -36,7 +35,10 @@ interface FlowState {
   addNode: (node: FlowNode) => void;
   updateNodeData: (id: string, patch: Partial<FlowNodeData>) => void;
   updateNodeStyle: (id: string, patch: Record<string, string | number>) => void;
+  updateNodePosition: (id: string, patch: Partial<FlowNode['position']>) => void;
+  arrangeNode: (id: string, direction: 'front' | 'forward' | 'backward' | 'back') => void;
   updateEdge: (id: string, patch: Partial<FlowEdgeData>) => void;
+  reverseEdge: (id: string) => void;
   reconnect: (edge: FlowEdge, connection: Connection) => void;
   insertGraph: (nodes: FlowNode[], edges: FlowEdge[], offset?: number) => void;
   deleteSelection: () => void;
@@ -134,7 +136,13 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   },
 
   addNode: (node) => {
-    set((state) => withCheckpoint(state, { nodes: [...state.nodes, node], edges: state.edges }));
+    set((state) => withCheckpoint(state, {
+      nodes: [
+        ...state.nodes.map((current) => ({ ...current, selected: false })),
+        { ...node, selected: true },
+      ],
+      edges: state.edges.map((edge) => ({ ...edge, selected: false })),
+    }));
   },
 
   updateNodeData: (id, patch) => {
@@ -163,6 +171,34 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     });
   },
 
+  updateNodePosition: (id, patch) => {
+    set((state) => {
+      const nodes = state.nodes.map((node) => (
+        node.id === id ? { ...node, position: { ...node.position, ...patch } } : node
+      ));
+      if (state.transactionStart) return { nodes, dirty: true };
+      return withCheckpoint(state, { nodes, edges: state.edges });
+    });
+  },
+
+  arrangeNode: (id, direction) => {
+    set((state) => {
+      const target = state.nodes.find((node) => node.id === id);
+      if (!target) return state;
+      const values = state.nodes.map((node) => node.zIndex ?? 0);
+      const current = target.zIndex ?? 0;
+      const nextZ = direction === 'front'
+        ? Math.max(...values) + 1
+        : direction === 'back'
+          ? Math.min(...values) - 1
+          : direction === 'forward'
+            ? current + 1
+            : current - 1;
+      const nodes = state.nodes.map((node) => node.id === id ? { ...node, zIndex: nextZ } : node);
+      return withCheckpoint(state, { nodes, edges: state.edges });
+    });
+  },
+
   updateEdge: (id, patch) => {
     set((state) => {
       const edges = state.edges.map((edge) => {
@@ -173,6 +209,8 @@ export const useFlowStore = create<FlowState>((set, get) => ({
           width: patch.width ?? edge.data?.width ?? 1.75,
           lineStyle: patch.lineStyle ?? edge.data?.lineStyle ?? 'solid',
           routing: patch.routing ?? edge.data?.routing ?? 'smoothstep',
+          arrowStart: patch.arrowStart ?? edge.data?.arrowStart ?? 'none',
+          arrowEnd: patch.arrowEnd ?? edge.data?.arrowEnd ?? 'closed',
         };
         const color = data.color;
         const lineStyle = data.lineStyle;
@@ -181,7 +219,8 @@ export const useFlowStore = create<FlowState>((set, get) => ({
           type: data.routing ?? edge.type,
           label: data.label,
           data,
-          markerEnd: { type: MarkerType.ArrowClosed, color, width: 18, height: 18 },
+          markerStart: createEdgeMarker(data.arrowStart, color),
+          markerEnd: createEdgeMarker(data.arrowEnd, color),
           style: {
             ...edge.style,
             stroke: color,
@@ -191,6 +230,28 @@ export const useFlowStore = create<FlowState>((set, get) => ({
         };
       });
       if (state.transactionStart) return { edges, dirty: true };
+      return withCheckpoint(state, { nodes: state.nodes, edges });
+    });
+  },
+
+  reverseEdge: (id) => {
+    set((state) => {
+      const edges = state.edges.map((edge) => {
+        if (edge.id !== id) return edge;
+        const color = edge.data?.color ?? 'oklch(0.430 0.025 70)';
+        const arrowStart = edge.data?.arrowEnd ?? 'closed';
+        const arrowEnd = edge.data?.arrowStart ?? 'none';
+        return {
+          ...edge,
+          source: edge.target,
+          target: edge.source,
+          sourceHandle: edge.targetHandle,
+          targetHandle: edge.sourceHandle,
+          data: { ...edge.data!, arrowStart, arrowEnd },
+          markerStart: createEdgeMarker(arrowStart, color),
+          markerEnd: createEdgeMarker(arrowEnd, color),
+        };
+      });
       return withCheckpoint(state, { nodes: state.nodes, edges });
     });
   },

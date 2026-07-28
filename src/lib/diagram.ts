@@ -1,6 +1,7 @@
 import dagre from '@dagrejs/dagre';
 import { MarkerType, type XYPosition } from '@xyflow/react';
 import type {
+  ArrowHead,
   EdgeRouting,
   FlowEdge,
   FlowEdgeData,
@@ -8,57 +9,64 @@ import type {
   FlowNodeData,
   ShapeKind,
 } from '../types';
+import { SHAPE_KINDS } from '../types';
 import { createId } from './id';
+import { getShapeDefinition, isShapeKind } from './shapeRegistry';
 
-export const SHAPE_DIMENSIONS: Record<ShapeKind, { width: number; height: number }> = {
-  start: { width: 148, height: 56 },
-  process: { width: 176, height: 72 },
-  decision: { width: 144, height: 112 },
-  document: { width: 176, height: 82 },
-  data: { width: 176, height: 72 },
-  database: { width: 148, height: 92 },
-  manual: { width: 176, height: 72 },
-  note: { width: 176, height: 96 },
-  group: { width: 420, height: 280 },
-  image: { width: 420, height: 280 },
-};
+export const SHAPE_DIMENSIONS = Object.fromEntries(
+  SHAPE_KINDS.map((kind) => {
+    const definition = getShapeDefinition(kind);
+    return [kind, { width: definition.width, height: definition.height }];
+  }),
+) as Record<ShapeKind, { width: number; height: number }>;
 
-export const SHAPE_LABELS: Record<ShapeKind, string> = {
-  start: '开始 / 结束',
-  process: '处理步骤',
-  decision: '判断',
-  document: '文档',
-  data: '数据输入',
-  database: '数据库',
-  manual: '人工操作',
-  note: '注释',
-  group: '分组 / 泳道',
-  image: '视觉参考',
-};
+export const SHAPE_LABELS = Object.fromEntries(
+  SHAPE_KINDS.map((kind) => [kind, getShapeDefinition(kind).label]),
+) as Record<ShapeKind, string>;
 
-export const DEFAULT_NODE_COLORS: Record<ShapeKind, Pick<FlowNodeData, 'fill' | 'stroke' | 'textColor'>> = {
-  start: { fill: 'oklch(0.935 0.050 172)', stroke: 'oklch(0.430 0.105 172)', textColor: 'oklch(0.240 0.055 172)' },
-  process: { fill: 'oklch(1 0 0)', stroke: 'oklch(0.580 0.018 70)', textColor: 'oklch(0.220 0.018 70)' },
-  decision: { fill: 'oklch(0.955 0.045 76)', stroke: 'oklch(0.560 0.155 72)', textColor: 'oklch(0.290 0.055 70)' },
-  document: { fill: 'oklch(0.955 0.025 245)', stroke: 'oklch(0.500 0.110 245)', textColor: 'oklch(0.260 0.055 245)' },
-  data: { fill: 'oklch(0.955 0.026 300)', stroke: 'oklch(0.510 0.105 300)', textColor: 'oklch(0.270 0.050 300)' },
-  database: { fill: 'oklch(0.940 0.036 172)', stroke: 'oklch(0.430 0.105 172)', textColor: 'oklch(0.240 0.055 172)' },
-  manual: { fill: 'oklch(0.965 0.030 36)', stroke: 'oklch(0.560 0.135 36)', textColor: 'oklch(0.300 0.060 36)' },
-  note: { fill: 'oklch(0.965 0.065 95)', stroke: 'oklch(0.620 0.115 88)', textColor: 'oklch(0.300 0.050 82)' },
-  group: { fill: 'oklch(0.975 0.004 76)', stroke: 'oklch(0.760 0.018 70)', textColor: 'oklch(0.390 0.018 70)' },
-  image: { fill: 'oklch(0.975 0.004 76)', stroke: 'oklch(0.760 0.018 70)', textColor: 'oklch(0.220 0.018 70)' },
-};
+function defaultNodeColors(kind: ShapeKind): Pick<FlowNodeData, 'fill' | 'stroke' | 'textColor'> {
+  const category = getShapeDefinition(kind).category;
+  if (kind === 'start' || kind === 'bpmn-start-event') {
+    return { fill: 'oklch(0.935 0.050 172)', stroke: 'oklch(0.430 0.105 172)', textColor: 'oklch(0.240 0.055 172)' };
+  }
+  if (kind === 'decision' || kind.includes('gateway')) {
+    return { fill: 'oklch(0.955 0.045 76)', stroke: 'oklch(0.560 0.155 72)', textColor: 'oklch(0.290 0.055 70)' };
+  }
+  if (kind === 'document' || kind === 'multiple-documents' || kind === 'bpmn-data-object') {
+    return { fill: 'oklch(0.955 0.025 245)', stroke: 'oklch(0.500 0.110 245)', textColor: 'oklch(0.260 0.055 245)' };
+  }
+  if (kind === 'data' || kind.includes('storage') || kind === 'database') {
+    return { fill: 'oklch(0.940 0.036 172)', stroke: 'oklch(0.430 0.105 172)', textColor: 'oklch(0.240 0.055 172)' };
+  }
+  if (kind === 'manual' || kind === 'manual-operation' || kind === 'bpmn-user-task') {
+    return { fill: 'oklch(0.965 0.030 36)', stroke: 'oklch(0.560 0.135 36)', textColor: 'oklch(0.300 0.060 36)' };
+  }
+  if (kind === 'note' || kind === 'uml-note' || kind === 'annotation') {
+    return { fill: 'oklch(0.965 0.065 95)', stroke: 'oklch(0.620 0.115 88)', textColor: 'oklch(0.300 0.050 82)' };
+  }
+  if (category === 'container' || kind === 'bpmn-pool') {
+    return { fill: 'oklch(0.975 0.004 76)', stroke: 'oklch(0.700 0.018 70)', textColor: 'oklch(0.330 0.018 70)' };
+  }
+  return { fill: 'oklch(1 0 0)', stroke: 'oklch(0.540 0.018 70)', textColor: 'oklch(0.220 0.018 70)' };
+}
+
+export const DEFAULT_NODE_COLORS = Object.fromEntries(
+  SHAPE_KINDS.map((kind) => [kind, defaultNodeColors(kind)]),
+) as Record<ShapeKind, Pick<FlowNodeData, 'fill' | 'stroke' | 'textColor'>>;
 
 export function createNodeData(kind: ShapeKind, label?: string): FlowNodeData {
   const colors = DEFAULT_NODE_COLORS[kind];
+  const category = getShapeDefinition(kind).category;
   return {
     label: label ?? SHAPE_LABELS[kind],
     kind,
     ...colors,
-    borderWidth: kind === 'group' ? 1 : 1.5,
-    radius: kind === 'start' ? 28 : 6,
+    borderWidth: category === 'container' ? 1 : kind === 'bpmn-end-event' ? 2.5 : 1.5,
+    radius: kind === 'start' ? 28 : kind === 'rounded-rectangle' || kind.startsWith('bpmn-') || kind === 'uml-state' ? 10 : 0,
     fontSize: 14,
     fontWeight: 600,
+    textAlign: 'center',
+    verticalAlign: 'middle',
     opacity: 1,
   };
 }
@@ -93,6 +101,8 @@ export function createFlowEdge(
     width: 1.75,
     lineStyle: 'solid',
     routing,
+    arrowStart: 'none',
+    arrowEnd: 'closed',
   };
 
   return {
@@ -102,25 +112,24 @@ export function createFlowEdge(
     type: routing,
     label,
     data,
-    markerEnd: { type: MarkerType.ArrowClosed, color, width: 18, height: 18 },
+    markerStart: createEdgeMarker(data.arrowStart, color),
+    markerEnd: createEdgeMarker(data.arrowEnd, color),
     style: { stroke: color, strokeWidth: data.width },
   };
 }
 
 export function sanitizeKind(value: unknown): ShapeKind {
-  const kinds: ShapeKind[] = [
-    'start',
-    'process',
-    'decision',
-    'document',
-    'data',
-    'database',
-    'manual',
-    'note',
-    'group',
-    'image',
-  ];
-  return kinds.includes(value as ShapeKind) ? (value as ShapeKind) : 'process';
+  return isShapeKind(value) ? value : 'process';
+}
+
+export function createEdgeMarker(kind: ArrowHead, color: string) {
+  if (kind === 'none') return undefined;
+  return {
+    type: kind === 'closed' ? MarkerType.ArrowClosed : MarkerType.Arrow,
+    color,
+    width: 18,
+    height: 18,
+  };
 }
 
 export function normalizeNodes(nodes: FlowNode[]): FlowNode[] {
@@ -155,6 +164,8 @@ export function normalizeEdges(edges: FlowEdge[], nodeIds: Set<string>): FlowEdg
       const routing = (edge.data?.routing ?? edge.type ?? 'smoothstep') as EdgeRouting;
       const color = edge.data?.color ?? 'oklch(0.430 0.025 70)';
       const width = edge.data?.width ?? 1.75;
+      const arrowStart = edge.data?.arrowStart ?? 'none';
+      const arrowEnd = edge.data?.arrowEnd ?? 'closed';
       return {
         ...edge,
         id: String(edge.id || createId('edge')),
@@ -168,8 +179,11 @@ export function normalizeEdges(edges: FlowEdge[], nodeIds: Set<string>): FlowEdg
           width,
           lineStyle: edge.data?.lineStyle ?? 'solid',
           routing,
+          arrowStart,
+          arrowEnd,
         },
-        markerEnd: { type: MarkerType.ArrowClosed, color, width: 18, height: 18 },
+        markerStart: createEdgeMarker(arrowStart, color),
+        markerEnd: createEdgeMarker(arrowEnd, color),
         style: {
           ...edge.style,
           stroke: color,
@@ -220,6 +234,42 @@ export function layoutGraph(
   });
 
   return { nodes: laidOutNodes, edges };
+}
+
+export function findOpenNodePosition(nodes: FlowNode[], kind: ShapeKind, center: XYPosition): XYPosition {
+  const dimensions = SHAPE_DIMENSIONS[kind];
+  const origin = {
+    x: center.x - dimensions.width / 2,
+    y: center.y - dimensions.height / 2,
+  };
+  const margin = 20;
+  const step = 44;
+  const collides = (position: XYPosition) => nodes.some((node) => {
+    const nodeDimensions = SHAPE_DIMENSIONS[node.data.kind];
+    const width = Number(node.measured?.width ?? node.width ?? node.style?.width ?? nodeDimensions.width);
+    const height = Number(node.measured?.height ?? node.height ?? node.style?.height ?? nodeDimensions.height);
+    return position.x < node.position.x + width + margin
+      && position.x + dimensions.width + margin > node.position.x
+      && position.y < node.position.y + height + margin
+      && position.y + dimensions.height + margin > node.position.y;
+  });
+
+  if (!collides(origin)) return origin;
+  for (let ring = 1; ring <= 8; ring += 1) {
+    for (let x = -ring; x <= ring; x += 1) {
+      for (const y of [-ring, ring]) {
+        const candidate = { x: origin.x + x * step, y: origin.y + y * step };
+        if (!collides(candidate)) return candidate;
+      }
+    }
+    for (let y = -ring + 1; y < ring; y += 1) {
+      for (const x of [-ring, ring]) {
+        const candidate = { x: origin.x + x * step, y: origin.y + y * step };
+        if (!collides(candidate)) return candidate;
+      }
+    }
+  }
+  return { x: origin.x + step * 9, y: origin.y + step * 9 };
 }
 
 export function cloneGraph<T>(value: T): T {
