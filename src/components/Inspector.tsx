@@ -40,6 +40,7 @@ import type {
 import {
   SHAPE_CATEGORY_LABELS,
   VISIBLE_SHAPES,
+  getShapeDefinition,
   type ShapeCategory,
 } from '../lib/shapeRegistry';
 import { useFlowStore } from '../store/flowStore';
@@ -57,7 +58,7 @@ const swatches = [
   'oklch(0.220 0.018 70)',
 ];
 
-const categoryOrder: Exclude<ShapeCategory, 'internal'>[] = ['flowchart', 'bpmn', 'uml', 'erd', 'architecture', 'basic', 'container'];
+const categoryOrder = Object.keys(SHAPE_CATEGORY_LABELS) as Exclude<ShapeCategory, 'internal'>[];
 const arrowLabels: Record<ArrowHead, string> = { none: '无', open: '开放', closed: '实心' };
 
 function downloadInspectorData(filename: string, content: string, type: string) {
@@ -204,6 +205,7 @@ export function Inspector({ open, nodes, edges, onOpenAi }: InspectorProps) {
           const effectivelyLocked = Boolean(node.data.locked || lockedByLayer);
           const width = Number(node.measured?.width ?? node.width ?? node.style?.width ?? 176);
           const height = Number(node.measured?.height ?? node.height ?? node.style?.height ?? 72);
+          const currentShapeDefinition = getShapeDefinition(node.data.kind);
           return (
             <>
               {effectivelyLocked && (
@@ -225,7 +227,7 @@ export function Inspector({ open, nodes, edges, onOpenAi }: InspectorProps) {
                 <label className="field-stack">
                   <FieldLabel>图形</FieldLabel>
                   <select value={node.data.kind} onChange={(event) => updateNodeData(node.id, { kind: event.target.value as ShapeKind })} {...transactionProps}>
-                    {node.data.kind === 'vector' && <option value="vector">SVG 矢量图元</option>}
+                    {!currentShapeDefinition.visible && <option value={node.data.kind}>{currentShapeDefinition.label}</option>}
                     {categoryOrder.map((category) => (
                       <optgroup key={category} label={SHAPE_CATEGORY_LABELS[category]}>
                         {VISIBLE_SHAPES.filter((definition) => definition.category === category).map((definition) => (

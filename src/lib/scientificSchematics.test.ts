@@ -6,6 +6,11 @@ import {
   createScientificSchematic,
 } from './scientificSchematics';
 import { serializePublicationSvg } from './scientificExport';
+import {
+  ARXIV_FIGURE_CORPUS_SUMMARY,
+  SCIENTIFIC_FIGURE_RECIPES,
+} from './scientificFigureRecipes';
+import { getShapeDefinition } from './shapeRegistry';
 import type { ScientificFigureSpec } from '../types';
 
 function options(overrides: Partial<ScientificSchematicOptions> = {}): ScientificSchematicOptions {
@@ -27,6 +32,43 @@ describe('scientific schematic templates', () => {
       expect(root?.data.provenance?.schematic?.references?.length, template.id).toBeGreaterThan(0);
       expect(schematic.edges.every((edge) => ids.has(edge.source) && ids.has(edge.target)), template.id).toBe(true);
       expect(schematic.nodes.every((node) => node.selected === false), template.id).toBe(true);
+    }
+  });
+
+  it('ships an evidence-backed drawing recipe for every schematic template', () => {
+    expect(ARXIV_FIGURE_CORPUS_SUMMARY.paperCount).toBe(100);
+    expect(ARXIV_FIGURE_CORPUS_SUMMARY.parsedFigureCount).toBe(2603);
+    expect(ARXIV_FIGURE_CORPUS_SUMMARY.llmFigureCount).toBe(1448);
+    expect(ARXIV_FIGURE_CORPUS_SUMMARY.embodiedFigureCount).toBe(1155);
+
+    for (const template of SCIENTIFIC_SCHEMATIC_TEMPLATES) {
+      const recipe = SCIENTIFIC_FIGURE_RECIPES[template.id];
+      expect(recipe.templateId).toBe(template.id);
+      expect(recipe.zones.length, template.id).toBeGreaterThanOrEqual(4);
+      expect(recipe.elements.length, template.id).toBeGreaterThanOrEqual(4);
+      expect(recipe.steps.length, template.id).toBeGreaterThanOrEqual(6);
+      expect(recipe.arrowRules.length, template.id).toBeGreaterThanOrEqual(1);
+      expect(recipe.colorRules.length, template.id).toBeGreaterThanOrEqual(1);
+      expect(recipe.checks.length, template.id).toBeGreaterThanOrEqual(4);
+      recipe.elements.forEach((element) => expect(getShapeDefinition(element.kind).kind).toBe(element.kind));
+    }
+  });
+
+  it('uses native scientific pictograms in every corpus-derived template', () => {
+    const corpusDerivedIds = [
+      'llm-training-pipeline',
+      'moe-routing',
+      'rag-tool-agent',
+      'reasoning-trace',
+      'robot-data-collection',
+      'world-model-rollout',
+      'sim-to-real',
+      'multi-embodiment-policy',
+    ] as const;
+
+    for (const templateId of corpusDerivedIds) {
+      const schematic = createScientificSchematic(options({ templateId, density: 'detailed' }));
+      expect(schematic.nodes.some((node) => node.data.kind.startsWith('scientific-')), templateId).toBe(true);
     }
   });
 

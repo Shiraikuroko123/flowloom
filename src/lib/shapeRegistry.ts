@@ -1,6 +1,6 @@
 import type { ShapeKind } from '../types';
 
-export type ShapeCategory = 'flowchart' | 'bpmn' | 'uml' | 'erd' | 'architecture' | 'basic' | 'container' | 'internal';
+export type ShapeCategory = 'flowchart' | 'bpmn' | 'uml' | 'erd' | 'architecture' | 'scientific' | 'basic' | 'container' | 'internal';
 export type ShapeTextPlacement = 'center' | 'left' | 'header' | 'lane' | 'footer';
 
 export interface ShapeDefinition {
@@ -25,6 +25,7 @@ export const SHAPE_CATEGORY_LABELS: Record<Exclude<ShapeCategory, 'internal'>, s
   uml: 'UML',
   erd: '实体关系图',
   architecture: '系统架构',
+  scientific: '科研论文图元',
   basic: '基础图形',
   container: '容器与标注',
 };
@@ -143,6 +144,25 @@ export const SHAPE_REGISTRY: ShapeDefinition[] = [
   define('arch-load-balancer', '负载均衡', 'Load Balancer', 'architecture', 176, 88, 'shape=mxgraph.networks.load_balancer', ['LB', '流量', 'load balancer']),
   define('arch-firewall', '防火墙', 'Firewall', 'architecture', 156, 96, 'shape=mxgraph.networks.firewall', ['安全', '网络边界', 'firewall']),
   define('arch-client', '客户端', 'Client Device', 'architecture', 148, 104, 'shape=mxgraph.networks.pc', ['浏览器', '桌面', '终端', 'client']),
+
+  define('scientific-image-frame', '观察帧', 'Observation / Image Frame', 'scientific', 168, 112, 'shape=imageFrame', ['论文', '图像', '视频帧', '观察', 'camera frame', 'observation'], { minWidth: 90, minHeight: 64, textPlacement: 'footer', contentPadding: '8px' }),
+  define('scientific-token-strip', 'Token 序列', 'Token Sequence Strip', 'scientific', 220, 72, 'shape=tokenStrip', ['token', '序列', 'embedding', '提示词', 'patch'], { minWidth: 120, minHeight: 52, textPlacement: 'footer', contentPadding: '6px 8px' }),
+  define('scientific-transformer', 'Transformer 模块', 'Transformer Module', 'scientific', 188, 136, 'shape=transformer', ['LLM', 'VLM', 'attention', '主干', 'backbone', 'transformer'], { minWidth: 120, minHeight: 96, textPlacement: 'footer', contentPadding: '7px 10px' }),
+  define('scientific-layer-stack', '网络层堆叠', 'Neural Layer Stack', 'scientific', 174, 122, 'shape=layerStack', ['层', '堆叠', 'Nx', 'encoder', 'decoder', 'layers'], { minWidth: 105, minHeight: 80, textPlacement: 'footer', contentPadding: '7px 10px' }),
+  define('scientific-dataset-stack', '数据集堆叠', 'Dataset Stack', 'scientific', 166, 114, 'shape=datasetStack', ['数据集', '数据混合', 'corpus', 'dataset', 'mixture'], { minWidth: 100, minHeight: 76, textPlacement: 'footer', contentPadding: '7px 10px' }),
+  define('scientific-frozen', '冻结模块', 'Frozen Module', 'scientific', 150, 92, 'shape=frozenModule', ['冻结', 'snowflake', 'fixed', 'frozen weights'], { minWidth: 88, minHeight: 62, textPlacement: 'footer', contentPadding: '7px 9px' }),
+  define('scientific-trainable', '可训练模块', 'Trainable Module', 'scientific', 150, 92, 'shape=trainableModule', ['训练', '梯度', 'trainable', 'learnable', 'weights'], { minWidth: 88, minHeight: 62, textPlacement: 'footer', contentPadding: '7px 9px' }),
+  define('scientific-camera', '相机 / 传感器', 'Camera / Sensor', 'scientific', 122, 92, 'shape=camera', ['相机', '传感器', 'RGB-D', 'camera', 'sensor'], { minWidth: 76, minHeight: 58, textPlacement: 'footer', contentPadding: '6px 8px' }),
+  define('scientific-robot-arm', '机械臂', 'Robot Arm', 'scientific', 146, 136, 'shape=robotArm', ['机械臂', '夹爪', 'manipulator', 'robot arm', 'gripper'], { minWidth: 88, minHeight: 88, textPlacement: 'footer', contentPadding: '7px 8px' }),
+  define('scientific-humanoid', '人形机器人', 'Humanoid Robot', 'scientific', 128, 146, 'shape=humanoid', ['人形', '机器人', 'humanoid', 'embodiment'], { minWidth: 78, minHeight: 96, textPlacement: 'footer', contentPadding: '7px 8px' }),
+  define('scientific-mobile-robot', '移动机器人', 'Mobile Robot', 'scientific', 154, 116, 'shape=mobileRobot', ['移动底盘', '轮式', 'mobile robot', 'navigation'], { minWidth: 92, minHeight: 76, textPlacement: 'footer', contentPadding: '7px 8px' }),
+  define('scientific-trajectory', '动作轨迹', 'Action Trajectory', 'scientific', 220, 92, 'shape=trajectory', ['轨迹', '路径', 'waypoint', 'action trajectory', 'motion'], { minWidth: 120, minHeight: 58, textPlacement: 'footer', contentPadding: '6px 8px' }),
+  define('scientific-voxel-grid', '体素 / 空间网格', 'Voxel / Spatial Grid', 'scientific', 154, 126, 'shape=voxelGrid', ['体素', '3D', '空间', 'voxel', 'spatial grid', 'point cloud'], { minWidth: 92, minHeight: 82, textPlacement: 'footer', contentPadding: '7px 8px' }),
+  define('scientific-coordinate-frame', '坐标系', 'Coordinate Frame', 'scientific', 112, 112, 'shape=coordinateFrame', ['坐标', 'XYZ', 'pose', 'coordinate frame'], { minWidth: 66, minHeight: 66, textPlacement: 'footer', contentPadding: '6px' }),
+  define('scientific-timeline', '时间步序列', 'Temporal Storyboard', 'scientific', 250, 98, 'shape=timeline', ['时间轴', '步骤', 'rollout', 'temporal', 'storyboard', 'timestep'], { minWidth: 140, minHeight: 62, textPlacement: 'footer', contentPadding: '6px 8px' }),
+  define('scientific-mini-plot', '嵌入式曲线图', 'Embedded Mini Plot', 'scientific', 184, 126, 'shape=miniPlot', ['曲线', '坐标轴', 'plot', 'chart', 'metric', 'ablation'], { minWidth: 108, minHeight: 80, textPlacement: 'footer', contentPadding: '6px 8px' }),
+  define('scientific-action-chunk', '动作块', 'Action Chunk', 'scientific', 196, 76, 'shape=actionChunk', ['动作', 'action token', 'chunk', 'control horizon'], { minWidth: 112, minHeight: 52, textPlacement: 'footer', contentPadding: '6px 8px' }),
+  define('scientific-loss-target', '损失 / 目标', 'Loss / Objective', 'scientific', 126, 110, 'shape=lossTarget', ['loss', 'objective', 'reward', '损失', '目标', '奖励'], { minWidth: 74, minHeight: 72, textPlacement: 'footer', contentPadding: '6px 8px' }),
 
   define('rectangle', '矩形', 'Rectangle', 'basic', 176, 80, 'rounded=0', ['方框', 'rectangle']),
   define('rounded-rectangle', '圆角矩形', 'Rounded Rectangle', 'basic', 176, 80, 'rounded=1;arcSize=12', ['圆角', 'rounded rectangle']),

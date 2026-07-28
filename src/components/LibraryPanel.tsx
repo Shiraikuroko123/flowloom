@@ -15,6 +15,7 @@ const categoryOrder: Exclude<ShapeCategory, 'internal'>[] = [
   'uml',
   'erd',
   'architecture',
+  'scientific',
   'basic',
   'container',
 ];

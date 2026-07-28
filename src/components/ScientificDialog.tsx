@@ -1,5 +1,6 @@
 import {
   Blocks,
+  BookOpenCheck,
   ChartSpline,
   CheckCircle2,
   Cpu,
@@ -8,6 +9,9 @@ import {
   Grid2X2,
   Info,
   LoaderCircle,
+  ListChecks,
+  Palette,
+  Route,
   ScanSearch,
   TriangleAlert,
   X,
@@ -39,7 +43,12 @@ import {
   defaultScientificSchematicTitle,
   type EditableScientificSchematic,
 } from '../lib/scientificSchematics';
+import {
+  ARXIV_FIGURE_CORPUS_SUMMARY,
+  getScientificFigureRecipe,
+} from '../lib/scientificFigureRecipes';
 import { IconButton } from './IconButton';
+import { ShapeVisual } from './ShapeVisual';
 
 type ScientificTab = 'figure' | 'chart' | 'schematic' | 'quality';
 
@@ -432,15 +441,32 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
   const renderNode = (node: FlowNode) => {
     const box = boxes.get(node.id)!;
     const isFrame = node.data.schematicRole === 'frame' || node.data.schematicRole === 'phase';
+    const isScientificShape = node.data.kind.startsWith('scientific-');
     const lines = previewLabelLines(node.data.label, box.width);
-    const fontSize = isFrame ? Math.min(16, node.data.fontSize) : Math.min(14, node.data.fontSize);
-    const startY = isFrame ? box.y + 25 : box.y + box.height / 2 - (lines.length - 1) * fontSize * 0.56 + fontSize * 0.34;
+    const fontSize = isFrame ? Math.min(16, node.data.fontSize) : isScientificShape ? Math.min(11, node.data.fontSize) : Math.min(14, node.data.fontSize);
+    const startY = isFrame
+      ? box.y + 25
+      : isScientificShape
+        ? box.y + box.height - Math.max(5, (lines.length - 1) * fontSize * 1.12 + 5)
+        : box.y + box.height / 2 - (lines.length - 1) * fontSize * 0.56 + fontSize * 0.34;
     return (
       <g key={node.id}>
-        {node.data.kind === 'ellipse' ? (
+        {isFrame ? (
+          <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={node.data.radius} fill={node.data.fill} stroke={node.data.stroke} strokeWidth={node.data.borderWidth} />
+        ) : node.data.kind === 'ellipse' ? (
           <ellipse cx={box.x + box.width / 2} cy={box.y + box.height / 2} rx={box.width / 2} ry={box.height / 2} fill={node.data.fill} stroke={node.data.stroke} strokeWidth={node.data.borderWidth} />
         ) : (
-          <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={node.data.radius} fill={node.data.fill} stroke={node.data.stroke} strokeWidth={node.data.borderWidth} />
+          <ShapeVisual
+            kind={node.data.kind}
+            x={box.x}
+            y={box.y}
+            width={box.width}
+            height={isScientificShape ? box.height * 0.82 : box.height}
+            fill={node.data.fill}
+            stroke={node.data.stroke}
+            strokeWidth={node.data.borderWidth}
+            radius={node.data.radius}
+          />
         )}
         {lines.map((line, index) => (
           <text
@@ -497,6 +523,7 @@ function SchematicEditor({
   onChange: (value: ScientificSchematicOptions) => void;
 }) {
   const selectedTemplate = SCIENTIFIC_SCHEMATIC_TEMPLATES.find((template) => template.id === options.templateId) ?? SCIENTIFIC_SCHEMATIC_TEMPLATES[0];
+  const figureRecipe = getScientificFigureRecipe(options.templateId);
   const selectTemplate = (templateId: ScientificSchematicTemplateId) => onChange({
     ...options,
     templateId,
@@ -511,7 +538,7 @@ function SchematicEditor({
     <div className="scientific-schematic-workspace">
       <section className="scientific-schematic-config" aria-label="论文示意图配置">
         <div className="scientific-section-heading">
-          <div><strong>结构原型</strong><span>来自公开论文构图规律的重新设计</span></div>
+          <div><strong>结构原型</strong><span>{ARXIV_FIGURE_CORPUS_SUMMARY.paperCount} 篇论文 · {ARXIV_FIGURE_CORPUS_SUMMARY.parsedFigureCount.toLocaleString()} 个 Figure 的构图语料</span></div>
         </div>
         <div className="schematic-template-list" role="group" aria-label="论文示意图原型">
           {SCIENTIFIC_SCHEMATIC_TEMPLATES.map((template) => {
@@ -572,6 +599,41 @@ function SchematicEditor({
             <button className={options.language === 'zh' ? 'is-active' : ''} aria-pressed={options.language === 'zh'} onClick={() => selectLanguage('zh')}>中文</button>
           </div>
         </div>
+
+        <div className="scientific-section-heading scientific-section-heading--divided">
+          <div><strong>Figure 绘制配方</strong><span>{figureRecipe.aspectRatio} · {figureRecipe.elements.length} 类必要元素 · {figureRecipe.steps.length} 步</span></div>
+        </div>
+        <div className="schematic-recipe-overview">
+          <div><span>阅读顺序</span><p>{figureRecipe.readingOrder}</p></div>
+          <div><span>视觉中心</span><p>{figureRecipe.focalPoint}</p></div>
+          <div><span>证据</span><p>{figureRecipe.evidence}</p></div>
+        </div>
+        <div className="schematic-recipe-zones" aria-label="版式区域">
+          {figureRecipe.zones.map((zone) => <span key={zone}>{zone}</span>)}
+        </div>
+        <details className="schematic-recipe" open>
+          <summary><BookOpenCheck size={14} />元素与视觉语义</summary>
+          <div className="schematic-recipe-elements">
+            {figureRecipe.elements.map((element) => (
+              <div key={`${element.kind}-${element.label}`}>
+                <span><ShapeVisual kind={element.kind} strokeWidth={1.3} /></span>
+                <p><strong>{element.label}</strong><small>{element.purpose}</small></p>
+              </div>
+            ))}
+          </div>
+          <div className="schematic-recipe-rules">
+            <div><strong><Route size={13} />箭头</strong>{figureRecipe.arrowRules.map((rule) => <p key={rule}>{rule}</p>)}</div>
+            <div><strong><Palette size={13} />颜色</strong>{figureRecipe.colorRules.map((rule) => <p key={rule}>{rule}</p>)}</div>
+          </div>
+        </details>
+        <details className="schematic-recipe" open>
+          <summary><ListChecks size={14} />具体绘制步骤</summary>
+          <ol>{figureRecipe.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+        </details>
+        <details className="schematic-recipe">
+          <summary><ScanSearch size={14} />投稿前检查</summary>
+          <ul>{figureRecipe.checks.map((check) => <li key={check}>{check}</li>)}</ul>
+        </details>
       </section>
 
       <section className="scientific-preview-pane scientific-schematic-preview" aria-label="论文示意图预览">

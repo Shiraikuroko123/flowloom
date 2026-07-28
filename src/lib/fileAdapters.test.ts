@@ -11,9 +11,9 @@ import { createFlowEdge, createFlowNode } from './diagram';
 import { VISIBLE_SHAPES } from './shapeRegistry';
 
 describe('diagram file adapters', () => {
-  it('registers 97 unique, user-visible standard shapes', () => {
-    expect(VISIBLE_SHAPES).toHaveLength(97);
-    expect(new Set(VISIBLE_SHAPES.map((definition) => definition.kind))).toHaveLength(97);
+  it('registers 115 unique, user-visible standard and scientific shapes', () => {
+    expect(VISIBLE_SHAPES).toHaveLength(115);
+    expect(new Set(VISIBLE_SHAPES.map((definition) => definition.kind))).toHaveLength(115);
   });
 
   it('imports Mermaid nodes, decisions, labels, and edges', async () => {

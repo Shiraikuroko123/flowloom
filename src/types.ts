@@ -98,6 +98,24 @@ export const SHAPE_KINDS = [
   'note',
   'group',
   'swimlane',
+  'scientific-image-frame',
+  'scientific-token-strip',
+  'scientific-transformer',
+  'scientific-layer-stack',
+  'scientific-dataset-stack',
+  'scientific-frozen',
+  'scientific-trainable',
+  'scientific-camera',
+  'scientific-robot-arm',
+  'scientific-humanoid',
+  'scientific-mobile-robot',
+  'scientific-trajectory',
+  'scientific-voxel-grid',
+  'scientific-coordinate-frame',
+  'scientific-timeline',
+  'scientific-mini-plot',
+  'scientific-action-chunk',
+  'scientific-loss-target',
   'vector',
   'image',
 ] as const;
@@ -135,7 +153,15 @@ export type ScientificSchematicTemplateId =
   | 'vla-policy'
   | 'prompt-conditioned-agent'
   | 'embodied-loop'
-  | 'train-deploy';
+  | 'train-deploy'
+  | 'llm-training-pipeline'
+  | 'moe-routing'
+  | 'rag-tool-agent'
+  | 'reasoning-trace'
+  | 'robot-data-collection'
+  | 'world-model-rollout'
+  | 'sim-to-real'
+  | 'multi-embodiment-policy';
 
 export type ScientificSchematicStyle = 'conference' | 'technical' | 'monochrome';
 export type ScientificSchematicDensity = 'compact' | 'standard' | 'detailed';

@@ -1425,6 +1425,10 @@ input[type="range"] {
   pointer-events: none;
 }
 
+.flow-node[class*="flow-node--scientific-"] .flow-node__shape {
+  height: 82%;
+}
+
 .flow-node.is-selected::after {
   position: absolute;
   inset: -4px;
