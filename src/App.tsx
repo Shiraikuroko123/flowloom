@@ -17,7 +17,6 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
-  getNodesBounds,
   getViewportForBounds,
   useReactFlow,
   type Viewport,
@@ -75,10 +74,11 @@ import { CommandPalette, type PaletteCommand } from './components/CommandPalette
 import { ToastRegion } from './components/ToastRegion';
 import { PageBar } from './components/PageBar';
 import { useFlowStore } from './store/flowStore';
-import { createFlowNode, findOpenNodePosition } from './lib/diagram';
+import { createFlowNode, findOpenGraphPosition, findOpenNodePosition, getFlowNodesBounds } from './lib/diagram';
 import { createId } from './lib/id';
 import { getShapeDefinition, isShapeKind } from './lib/shapeRegistry';
 import type { EditableScientificChart } from './lib/scientific';
+import type { EditableScientificSchematic } from './lib/scientificSchematics';
 
 const DRAFT_KEY = 'flowloom.document.v2';
 const LEGACY_DRAFT_KEY = 'flowloom.document.v1';
@@ -402,10 +402,15 @@ function EditorApp() {
   }, [addToast, flow, loadDocument, loadGraph]);
 
   const applyAi = useCallback((nextTitle: string, nextNodes: FlowNode[], nextEdges: FlowEdge[]) => {
+    const scientific = nextNodes.some((node) => node.data.scientificRole === 'schematic-root');
     loadGraph(nextTitle, nextNodes, nextEdges);
     setFidelity('structural');
-    setSourceFormat('AI');
-    addToast({ tone: 'success', title: 'AI 流程图已生成', detail: `${nextNodes.length} 个可编辑节点` });
+    setSourceFormat(scientific ? 'AI 论文示意图' : 'AI');
+    addToast({
+      tone: 'success',
+      title: scientific ? 'AI 论文示意图已生成' : 'AI 流程图已生成',
+      detail: `${nextNodes.length} 个可编辑节点、${nextEdges.length} 条连接`,
+    });
     window.setTimeout(() => flow.fitView({ padding: 0.16, duration: 320 }), 80);
   }, [addToast, flow, loadGraph]);
 
@@ -430,14 +435,17 @@ function EditorApp() {
     const figureNode = nodes.find((node) => node.data.scientificRole === 'figure-background');
     const figureWidth = Number.parseFloat(String(figureNode?.style?.width ?? figureNode?.measured?.width ?? ''));
     const figureHeight = Number.parseFloat(String(figureNode?.style?.height ?? figureNode?.measured?.height ?? ''));
-    const center = figureNode && Number.isFinite(figureWidth) && Number.isFinite(figureHeight)
+    const figureCenter = figureNode && Number.isFinite(figureWidth) && Number.isFinite(figureHeight)
       ? { x: figureNode.position.x + figureWidth / 2, y: figureNode.position.y + figureHeight / 2 }
-      : viewportCenter;
+      : undefined;
+    const origin = figureCenter
+      ? { x: figureCenter.x - chart.width / 2, y: figureCenter.y - chart.height / 2 }
+      : findOpenGraphPosition(nodes, { width: chart.width, height: chart.height }, viewportCenter);
     const positioned = chart.nodes.map((node) => node.parentId ? node : {
       ...node,
       position: {
-        x: center.x - chart.width / 2 + node.position.x,
-        y: center.y - chart.height / 2 + node.position.y,
+        x: origin.x + node.position.x,
+        y: origin.y + node.position.y,
       },
     });
     insertGraph(positioned, [], 0);
@@ -448,6 +456,39 @@ function EditorApp() {
       title: '已插入可编辑科研图表',
       detail: `${chart.nodes.length - 1} 个 SVG 图元，原始数据已随图表保存。`,
     });
+  }, [addToast, flow, insertGraph, nodes]);
+
+  const applyScientificSchematic = useCallback((schematic: EditableScientificSchematic) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const viewportCenter = flow.screenToFlowPosition({
+      x: rect ? rect.left + rect.width / 2 : window.innerWidth / 2,
+      y: rect ? rect.top + rect.height / 2 : window.innerHeight / 2,
+    });
+    const figureNode = nodes.find((node) => node.data.scientificRole === 'figure-background');
+    const figureWidth = Number.parseFloat(String(figureNode?.style?.width ?? figureNode?.measured?.width ?? ''));
+    const figureHeight = Number.parseFloat(String(figureNode?.style?.height ?? figureNode?.measured?.height ?? ''));
+    const figureCenter = figureNode && Number.isFinite(figureWidth) && Number.isFinite(figureHeight)
+      ? { x: figureNode.position.x + figureWidth / 2, y: figureNode.position.y + figureHeight / 2 }
+      : undefined;
+    const origin = figureCenter
+      ? { x: figureCenter.x - schematic.width / 2, y: figureCenter.y - schematic.height / 2 }
+      : findOpenGraphPosition(nodes, { width: schematic.width, height: schematic.height }, viewportCenter);
+    const positioned = schematic.nodes.map((node) => ({
+      ...node,
+      position: {
+        x: origin.x + node.position.x,
+        y: origin.y + node.position.y,
+      },
+    }));
+    insertGraph(positioned, schematic.edges, 0);
+    setSourceFormat('论文示意图');
+    setFidelity('structural');
+    addToast({
+      tone: 'success',
+      title: '已插入可编辑论文示意图',
+      detail: `${schematic.nodes.length} 个对象、${schematic.edges.length} 条连接；构图来源已写入图形元数据。`,
+    });
+    window.setTimeout(() => flow.fitView({ padding: 0.1, duration: 320 }), 80);
   }, [addToast, flow, insertGraph, nodes]);
 
   const fileName = useCallback((extension: string) => `${(title.trim() || 'flowchart').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80)}.${extension}`, [title]);
@@ -495,7 +536,11 @@ function EditorApp() {
         height: Number.parseFloat(String(figureNode.style?.height ?? figureNode.measured?.height ?? 1)),
       } : undefined;
       const contentNodes = nodes.filter((node) => !node.data.exportExcluded);
-      const bounds = scientificBounds ?? getNodesBounds(contentNodes);
+      const bounds = scientificBounds ?? getFlowNodesBounds(contentNodes);
+      const hasNativeScientificContent = contentNodes.some((node) => (
+        node.data.scientificRole === 'schematic-root'
+        || node.data.scientificRole === 'chart-root'
+      ));
       const naturalWidth = scientificBounds ? Math.ceil(bounds.width) : Math.max(480, Math.ceil(bounds.width + 128));
       const naturalHeight = scientificBounds ? Math.ceil(bounds.height) : Math.max(320, Math.ceil(bounds.height + 128));
       const scale = scientificBounds ? 1 : Math.min(1, 4096 / Math.max(naturalWidth, naturalHeight));
@@ -539,10 +584,34 @@ function EditorApp() {
         },
       };
       if (format === 'svg') {
-        if (activeScientificFigure && scientificBounds) {
+        if ((activeScientificFigure && scientificBounds) || hasNativeScientificContent) {
           const { serializePublicationSvg } = await import('./lib/scientificExport');
+          let exportSpec: ScientificFigureSpec;
+          let exportOrigin: { x: number; y: number } | undefined;
+          if (activeScientificFigure && scientificBounds) {
+            exportSpec = activeScientificFigure;
+          } else {
+            const padding = 48;
+            const paddedWidth = Math.max(1, bounds.width + padding * 2);
+            const paddedHeight = Math.max(1, bounds.height + padding * 2);
+            const { pxToMm } = await import('./lib/scientific');
+            exportOrigin = { x: bounds.x - padding, y: bounds.y - padding };
+            exportSpec = {
+              widthMm: pxToMm(paddedWidth),
+              heightMm: pxToMm(paddedHeight),
+              dpi: 96,
+              rows: 1,
+              columns: 1,
+              marginMm: 0,
+              gapMm: 0,
+              panelLabels: false,
+              labelStyle: 'uppercase',
+              background: '#ffffff',
+              updatedAt: new Date().toISOString(),
+            };
+          }
           downloadContent(
-            serializePublicationSvg(title, renderedNodes, renderedEdges, activeScientificFigure),
+            serializePublicationSvg(title, renderedNodes, renderedEdges, exportSpec, { origin: exportOrigin }),
             fileName('svg'),
             'image/svg+xml;charset=utf-8',
           );
@@ -579,7 +648,9 @@ function EditorApp() {
         title: `已导出 ${format.toUpperCase()}`,
         detail: activeScientificFigure && scientificBounds
           ? `${activeScientificFigure.widthMm} × ${activeScientificFigure.heightMm} mm${format === 'svg' ? '，已写入物理尺寸' : ` · ${targetWidth} × ${targetHeight} px`}`
-          : undefined,
+          : format === 'svg' && hasNativeScientificContent
+            ? '已导出原生矢量图元并写入构图来源元数据'
+            : undefined,
       });
     } catch (error) {
       addToast({ tone: 'error', title: '导出失败', detail: error instanceof Error ? error.message : '浏览器无法生成文件。' });
@@ -829,6 +900,7 @@ function EditorApp() {
           onClose={() => setScientificOpen(false)}
           onConfigureFigure={applyScientificFigure}
           onInsertChart={applyScientificChart}
+          onInsertSchematic={applyScientificSchematic}
         />
       </Suspense>
       <CommandPalette open={commandOpen} commands={commands} onClose={() => setCommandOpen(false)} />

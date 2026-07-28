@@ -140,6 +140,35 @@ describe('diagram file adapters', () => {
     expect(serializeDrawio(graph.title, graph.nodes, graph.edges)).toContain('<mxGraphModel');
   });
 
+  it('preserves AI scientific schematic geometry, roles, and edge styling', () => {
+    const graph = aiPayloadToGraph({
+      title: 'VLA policy',
+      direction: 'LR',
+      nodes: [
+        { id: 'frame', label: 'VLA policy', role: 'frame', position: { x: 0, y: 0 }, width: 1200, height: 680, fill: '#ffffff', stroke: '#88939d', zIndex: -30 },
+        { id: 'vision', label: 'Vision encoder', role: 'encoder', position: { x: 80, y: 180 }, width: 190, height: 90, fill: '#e7f4ee', stroke: '#3e8064' },
+        { id: 'policy', label: 'Action expert', role: 'policy', position: { x: 780, y: 180 }, width: 190, height: 110, fill: '#fcebed', stroke: '#b64e63', fontSize: 16 },
+        { id: 'robot', label: 'Robot', role: 'environment', position: { x: 1010, y: 400 }, width: 150, height: 100 },
+      ],
+      edges: [
+        { source: 'vision', target: 'policy', routing: 'straight', color: '#42515d', width: 2.2 },
+        { source: 'policy', target: 'robot', routing: 'bezier', lineStyle: 'dashed', color: '#a34f3c', arrowEnd: 'open' },
+        { source: 'missing', target: 'robot' },
+      ],
+    });
+
+    expect(graph.nodes[0]).toMatchObject({
+      position: { x: 0, y: 0 },
+      zIndex: -30,
+      style: { width: 1200, height: 680 },
+      data: { kind: 'group', schematicRole: 'frame', scientificRole: 'schematic-root' },
+    });
+    expect(graph.nodes.find((node) => node.id === 'robot')?.data.kind).toBe('ellipse');
+    expect(graph.nodes.find((node) => node.id === 'policy')?.data.fontSize).toBe(16);
+    expect(graph.edges).toHaveLength(2);
+    expect(graph.edges[1].data).toMatchObject({ routing: 'bezier', lineStyle: 'dashed', color: '#a34f3c', arrowEnd: 'open' });
+  });
+
   it('round-trips every registered editable shape through draw.io', async () => {
     const nodes = VISIBLE_SHAPES.map((definition, index) => createFlowNode(
       definition.kind,

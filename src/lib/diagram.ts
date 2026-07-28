@@ -144,7 +144,7 @@ export function createFlowEdge(
     id: createId('edge'),
     source,
     target,
-    type: routing,
+    type: reactFlowEdgeType(routing),
     label,
     data,
     markerStart: createEdgeMarker(data.arrowStart, color),
@@ -165,6 +165,15 @@ export function createEdgeMarker(kind: ArrowHead, color: string) {
     width: 18,
     height: 18,
   };
+}
+
+export function reactFlowEdgeType(routing: EdgeRouting): 'smoothstep' | 'straight' | 'default' {
+  return routing === 'bezier' ? 'default' : routing;
+}
+
+export function normalizeEdgeRouting(value: unknown): EdgeRouting {
+  if (value === 'straight' || value === 'smoothstep' || value === 'bezier') return value;
+  return value === 'default' ? 'bezier' : 'smoothstep';
 }
 
 export function normalizeNodes(nodes: FlowNode[]): FlowNode[] {
@@ -197,7 +206,7 @@ export function normalizeEdges(edges: FlowEdge[], nodeIds: Set<string>): FlowEdg
   return edges
     .filter((edge) => nodeIds.has(String(edge.source)) && nodeIds.has(String(edge.target)))
     .map((edge) => {
-      const routing = (edge.data?.routing ?? edge.type ?? 'smoothstep') as EdgeRouting;
+      const routing = normalizeEdgeRouting(edge.data?.routing ?? edge.type);
       const color = edge.data?.color ?? 'oklch(0.430 0.025 70)';
       const width = edge.data?.width ?? 1.75;
       const arrowStart = edge.data?.arrowStart ?? 'none';
@@ -207,7 +216,7 @@ export function normalizeEdges(edges: FlowEdge[], nodeIds: Set<string>): FlowEdg
         id: String(edge.id || createId('edge')),
         source: String(edge.source),
         target: String(edge.target),
-        type: routing,
+        type: reactFlowEdgeType(routing),
         label: edge.data?.label ?? (typeof edge.label === 'string' ? edge.label : undefined),
         data: {
           label: edge.data?.label ?? (typeof edge.label === 'string' ? edge.label : undefined),
@@ -306,6 +315,102 @@ export function findOpenNodePosition(nodes: FlowNode[], kind: ShapeKind, center:
     }
   }
   return { x: origin.x + step * 9, y: origin.y + step * 9 };
+}
+
+interface FlowNodeRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+function resolvedNodeRects(nodes: FlowNode[]): FlowNodeRect[] {
+  const visibleNodes = nodes.filter((node) => !node.hidden && !node.data.hidden);
+  const byId = new Map(visibleNodes.map((node) => [node.id, node]));
+  const absolutePositions = new Map<string, XYPosition>();
+  const absolutePosition = (node: FlowNode, visiting = new Set<string>()): XYPosition => {
+    const cached = absolutePositions.get(node.id);
+    if (cached) return cached;
+    if (!node.parentId || visiting.has(node.id)) {
+      absolutePositions.set(node.id, node.position);
+      return node.position;
+    }
+    const parent = byId.get(node.parentId);
+    if (!parent) {
+      absolutePositions.set(node.id, node.position);
+      return node.position;
+    }
+    const parentPosition = absolutePosition(parent, new Set(visiting).add(node.id));
+    const position = { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y };
+    absolutePositions.set(node.id, position);
+    return position;
+  };
+  const dimension = (value: unknown, fallback: number) => {
+    const parsed = typeof value === 'number' ? value : Number.parseFloat(String(value ?? ''));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  };
+  return visibleNodes.map((node) => {
+    const fallback = SHAPE_DIMENSIONS[node.data.kind];
+    const position = absolutePosition(node);
+    const width = dimension(node.measured?.width ?? node.width ?? node.style?.width, fallback.width);
+    const height = dimension(node.measured?.height ?? node.height ?? node.style?.height, fallback.height);
+    return {
+      left: position.x,
+      top: position.y,
+      right: position.x + width,
+      bottom: position.y + height,
+    };
+  });
+}
+
+export function getFlowNodesBounds(nodes: FlowNode[]): { x: number; y: number; width: number; height: number } {
+  const rectangles = resolvedNodeRects(nodes);
+  if (rectangles.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+  const bounds = rectangles.reduce((current, rectangle) => ({
+    left: Math.min(current.left, rectangle.left),
+    top: Math.min(current.top, rectangle.top),
+    right: Math.max(current.right, rectangle.right),
+    bottom: Math.max(current.bottom, rectangle.bottom),
+  }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+  return {
+    x: bounds.left,
+    y: bounds.top,
+    width: bounds.right - bounds.left,
+    height: bounds.bottom - bounds.top,
+  };
+}
+
+export function findOpenGraphPosition(
+  nodes: FlowNode[],
+  size: { width: number; height: number },
+  center: XYPosition,
+  margin = 48,
+): XYPosition {
+  const width = Math.max(1, size.width);
+  const height = Math.max(1, size.height);
+  const preferred = { x: center.x - width / 2, y: center.y - height / 2 };
+  const obstacles = resolvedNodeRects(nodes);
+  if (obstacles.length === 0) return preferred;
+  const collides = (position: XYPosition) => obstacles.some((obstacle) => (
+    position.x < obstacle.right + margin
+    && position.x + width + margin > obstacle.left
+    && position.y < obstacle.bottom + margin
+    && position.y + height + margin > obstacle.top
+  ));
+  if (!collides(preferred)) return preferred;
+
+  const occupied = getFlowNodesBounds(nodes);
+  const candidates = [
+    { x: occupied.x + occupied.width + margin, y: preferred.y },
+    { x: preferred.x, y: occupied.y + occupied.height + margin },
+    { x: occupied.x - width - margin, y: preferred.y },
+    { x: preferred.x, y: occupied.y - height - margin },
+  ];
+  return candidates.sort((left, right) => {
+    const leftDistance = (left.x - preferred.x) ** 2 + (left.y - preferred.y) ** 2;
+    const rightDistance = (right.x - preferred.x) ** 2 + (right.y - preferred.y) ** 2;
+    return leftDistance - rightDistance;
+  })[0];
 }
 
 export function cloneGraph<T>(value: T): T {

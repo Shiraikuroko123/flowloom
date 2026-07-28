@@ -112,7 +112,43 @@ export type VerticalAlign = 'top' | 'middle' | 'bottom';
 export type FidelityLevel = 'structural' | 'hybrid' | 'visual';
 export type SvgPrimitiveTag = 'rect' | 'ellipse' | 'circle' | 'line' | 'polyline' | 'polygon' | 'path' | 'text';
 export type ScientificChartType = 'scatter' | 'line' | 'bar' | 'boxplot' | 'heatmap' | 'errorbar';
-export type ScientificRole = 'figure-background' | 'panel-guide' | 'panel-label' | 'chart-root';
+export type ScientificRole = 'figure-background' | 'panel-guide' | 'panel-label' | 'chart-root' | 'schematic-root';
+export type ScientificSchematicRole =
+  | 'frame'
+  | 'phase'
+  | 'modality'
+  | 'token'
+  | 'encoder'
+  | 'bridge'
+  | 'backbone'
+  | 'policy'
+  | 'action'
+  | 'environment'
+  | 'memory'
+  | 'dataset'
+  | 'loss'
+  | 'annotation';
+
+export type ScientificSchematicTemplateId =
+  | 'multimodal-foundation'
+  | 'vision-language-bridge'
+  | 'vla-policy'
+  | 'prompt-conditioned-agent'
+  | 'embodied-loop'
+  | 'train-deploy';
+
+export type ScientificSchematicStyle = 'conference' | 'technical' | 'monochrome';
+export type ScientificSchematicDensity = 'compact' | 'standard' | 'detailed';
+export type ScientificSchematicLanguage = 'en' | 'zh';
+
+export interface ScientificSchematicOptions {
+  templateId: ScientificSchematicTemplateId;
+  title: string;
+  backbone: string;
+  style: ScientificSchematicStyle;
+  density: ScientificSchematicDensity;
+  language: ScientificSchematicLanguage;
+}
 
 export interface ScientificFigureSpec {
   widthMm: number;
@@ -137,7 +173,7 @@ export interface ScientificFieldMap {
 
 export interface ScientificProvenance {
   id: string;
-  kind: 'data-chart' | 'imported-asset';
+  kind: 'data-chart' | 'imported-asset' | 'scientific-schematic';
   sourceName: string;
   sourceFormat: string;
   sourceData?: string;
@@ -156,6 +192,16 @@ export interface ScientificProvenance {
     url?: string;
     author?: string;
     modified?: boolean;
+  };
+  schematic?: {
+    templateId: ScientificSchematicTemplateId | 'ai-generated';
+    style: ScientificSchematicStyle;
+    density: ScientificSchematicDensity;
+    language: ScientificSchematicLanguage;
+    backbone?: string;
+    references?: string[];
+    generatedBy: 'template' | 'ai';
+    prompt?: string;
   };
 }
 
@@ -199,6 +245,8 @@ export interface FlowNodeData extends Record<string, unknown> {
   provenance?: ScientificProvenance;
   provenanceRef?: string;
   scientificRole?: ScientificRole;
+  schematicRole?: ScientificSchematicRole;
+  schematicDetail?: ScientificSchematicDensity;
   exportExcluded?: boolean;
   locked?: boolean;
 }
@@ -296,14 +344,31 @@ export interface AiDiagramPayload {
     description?: string;
     kind?: ShapeKind;
     position?: XYPosition;
+    width?: number;
+    height?: number;
     fill?: string;
     stroke?: string;
+    textColor?: string;
+    fontSize?: number;
+    fontWeight?: number;
+    borderWidth?: number;
+    radius?: number;
+    opacity?: number;
+    rotation?: number;
+    zIndex?: number;
+    role?: ScientificSchematicRole;
   }>;
   edges: Array<{
     id?: string;
     source: string;
     target: string;
     label?: string;
+    routing?: EdgeRouting;
+    lineStyle?: LineStyle;
+    color?: string;
+    width?: number;
+    arrowStart?: ArrowHead;
+    arrowEnd?: ArrowHead;
   }>;
 }
 

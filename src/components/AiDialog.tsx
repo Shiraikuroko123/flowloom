@@ -10,9 +10,10 @@ import {
   X,
 } from 'lucide-react';
 import type { AiAttachment, AiConfig, FlowEdge, FlowNode } from '../types';
-import { generateDiagram, readAiAttachment } from '../lib/aiClient';
+import { generateDiagram, isScientificAiScenario, readAiAttachment } from '../lib/aiClient';
 import { aiPayloadToGraph } from '../lib/fileAdapters';
 import { layoutGraph, normalizeGraph } from '../lib/diagram';
+import { createId } from '../lib/id';
 import { IconButton } from './IconButton';
 
 const CONFIG_KEY = 'flowloom.ai.config.v1';
@@ -25,6 +26,9 @@ const scenarioOptions = [
   '故障响应与运维',
   '客户旅程与服务蓝图',
   '教学与决策树',
+  '大模型 / 多模态论文示意图',
+  'VLA / 具身智能系统图',
+  '训练、推理与数据闭环',
 ];
 
 function loadConfig(): AiConfig {
@@ -75,6 +79,7 @@ export function AiDialog({ open, referenceNode, onClose, onApply }: AiDialogProp
   const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState<'idle' | 'reading' | 'generating' | 'success'>('idle');
   const [error, setError] = useState('');
+  const scientificScenario = isScientificAiScenario(scenario);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -120,10 +125,14 @@ export function AiDialog({ open, referenceNode, onClose, onApply }: AiDialogProp
     setStatus('generating');
     abortRef.current = new AbortController();
     try {
+      const requestPrompt = prompt.trim() || (scientificScenario
+        ? 'Reconstruct the supplied source as an original editable scientific system schematic.'
+        : 'Reconstruct the supplied source as an editable flowchart.');
+      const requestAttachments = referenceAttachment ? [referenceAttachment, ...attachments] : attachments;
       const payload = await generateDiagram({
-        prompt: prompt.trim() || 'Reconstruct the supplied source as an editable flowchart.',
+        prompt: requestPrompt,
         scenario,
-        attachments: referenceAttachment ? [referenceAttachment, ...attachments] : attachments,
+        attachments: requestAttachments,
         config,
         signal: abortRef.current.signal,
       });
@@ -131,7 +140,34 @@ export function AiDialog({ open, referenceNode, onClose, onApply }: AiDialogProp
       const positioned = parsed.nodes.some((node) => node.position.x || node.position.y)
         ? normalizeGraph(parsed.nodes, parsed.edges)
         : layoutGraph(parsed.nodes, parsed.edges, parsed.direction);
-      onApply(parsed.title, positioned.nodes, positioned.edges);
+      const scientificRootIndex = positioned.nodes.findIndex((node) => node.data.schematicRole === 'frame');
+      const rootIndex = scientificRootIndex >= 0 ? scientificRootIndex : 0;
+      const finalNodes = scientificScenario ? positioned.nodes.map((node, index) => index === rootIndex ? {
+        ...node,
+        data: {
+          ...node.data,
+          scientificRole: 'schematic-root' as const,
+          schematicRole: node.data.schematicRole ?? 'frame',
+          provenance: {
+            id: createId('provenance'),
+            kind: 'scientific-schematic' as const,
+            sourceName: 'CCSwitch AI scientific schematic',
+            sourceFormat: 'OpenAI-compatible structured JSON',
+            sourceData: JSON.stringify({ scenario, prompt: requestPrompt, attachments: requestAttachments.map((item) => item.name) }),
+            engine: config.model,
+            generatedAt: new Date().toISOString(),
+            schematic: {
+              templateId: 'ai-generated' as const,
+              style: 'conference' as const,
+              density: 'detailed' as const,
+              language: /[\p{Script=Han}]/u.test(requestPrompt) ? 'zh' as const : 'en' as const,
+              generatedBy: 'ai' as const,
+              prompt: requestPrompt,
+            },
+          },
+        },
+      } : node) : positioned.nodes;
+      onApply(parsed.title, finalNodes, positioned.edges);
       setStatus('success');
       window.setTimeout(() => {
         setStatus('idle');
@@ -158,7 +194,7 @@ export function AiDialog({ open, referenceNode, onClose, onApply }: AiDialogProp
   return (
     <dialog ref={dialogRef} className="app-dialog ai-dialog" onClose={onClose} onCancel={(event) => { event.preventDefault(); close(); }}>
       <div className="dialog-header">
-        <div className="dialog-title"><span className="dialog-title__icon"><Sparkles size={18} /></span><div><h2>AI 流程设计</h2><p>OpenAI 兼容接口</p></div></div>
+        <div className="dialog-title"><span className="dialog-title__icon"><Sparkles size={18} /></span><div><h2>AI 图形设计</h2><p>{scientificScenario ? '论文系统示意图 · OpenAI 兼容接口' : '结构化流程图 · OpenAI 兼容接口'}</p></div></div>
         <IconButton label="关闭" icon={<X size={18} />} onClick={close} />
       </div>
 
@@ -176,7 +212,9 @@ export function AiDialog({ open, referenceNode, onClose, onApply }: AiDialogProp
               rows={8}
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
-              placeholder="例如：为企业客户退款申请设计审批流程，包含金额分级、风控复核、超时升级和失败回退。"
+              placeholder={scientificScenario
+                ? '例如：绘制一个 VLA 机器人策略图。双视觉编码器与语言指令进入 VLM 主干，动作专家预测 16 步动作块，并显示机器人环境反馈回路。'
+                : '例如：为企业客户退款申请设计审批流程，包含金额分级、风控复核、超时升级和失败回退。'}
               autoFocus
             />
           </label>
@@ -225,7 +263,7 @@ export function AiDialog({ open, referenceNode, onClose, onApply }: AiDialogProp
         ) : status === 'success' ? (
           <button className="primary-button" disabled><Check size={16} /> 已生成</button>
         ) : (
-          <button className="primary-button" onClick={submit}><Sparkles size={16} /> 生成流程图</button>
+          <button className="primary-button" onClick={submit}><Sparkles size={16} /> {scientificScenario ? '生成论文示意图' : '生成流程图'}</button>
         )}
       </div>
     </dialog>

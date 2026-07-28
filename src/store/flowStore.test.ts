@@ -90,6 +90,18 @@ describe('flow store safety', () => {
     ]);
   });
 
+  it('preserves explicit selection state when inserting a generated graph', () => {
+    const first = createFlowNode('process', { x: 0, y: 0 }, 'A', { id: 'a', selected: false });
+    const second = createFlowNode('process', { x: 200, y: 0 }, 'B', { id: 'b', selected: false });
+    const edge = createFlowEdge('a', 'b');
+    edge.selected = false;
+
+    useFlowStore.getState().insertGraph([first, second], [edge], 0);
+
+    expect(useFlowStore.getState().nodes.every((node) => node.selected === false)).toBe(true);
+    expect(useFlowStore.getState().edges.every((item) => item.selected === false)).toBe(true);
+  });
+
   it('groups and ungroups selected nodes without changing absolute positions', () => {
     const first = createFlowNode('process', { x: 100, y: 80 }, 'A', { id: 'a', selected: true });
     const second = createFlowNode('decision', { x: 340, y: 180 }, 'B', { id: 'b', selected: true });

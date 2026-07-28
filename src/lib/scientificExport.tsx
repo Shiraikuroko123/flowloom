@@ -277,11 +277,12 @@ export function serializePublicationSvg(
   nodes: FlowNode[],
   edges: FlowEdge[],
   spec: ScientificFigureSpec,
+  options: { origin?: { x: number; y: number } } = {},
 ): string {
   const width = mmToPx(spec.widthMm);
   const height = mmToPx(spec.heightMm);
   const figureNode = nodes.find((node) => node.data.scientificRole === 'figure-background');
-  const origin = figureNode?.position ?? { x: 0, y: 0 };
+  const origin = options.origin ?? figureNode?.position ?? { x: 0, y: 0 };
   const visibleNodes = nodes.filter((node) => !node.hidden && !node.data.hidden && !node.data.exportExcluded);
   const byId = new Map(visibleNodes.map((node) => [node.id, node]));
   const boxes = new Map(visibleNodes.map((node) => [node.id, nodeBox(node, byId, origin)]));
@@ -289,20 +290,24 @@ export function serializePublicationSvg(
     .filter((node) => node.data.scientificRole !== 'figure-background')
     .sort((left, right) => effectiveZIndex(left, byId) - effectiveZIndex(right, byId));
   const background = spec.background === 'transparent' ? '' : `<rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"/>`;
-  const serializedNodes = sortedNodes.map((node) => {
+  const serializeNodes = (values: FlowNode[]) => values.map((node) => {
     const box = boxes.get(node.id)!;
     return node.data.kind === 'vector' ? serializeVectorNode(node, box) : serializeShapeNode(node, box);
   }).join('');
+  const backgroundNodes = sortedNodes.filter((node) => node.data.schematicRole === 'frame' || node.data.schematicRole === 'phase');
+  const foregroundNodes = sortedNodes.filter((node) => node.data.schematicRole !== 'frame' && node.data.schematicRole !== 'phase');
   const provenance = visibleNodes
     .filter((node) => node.data.provenance)
     .map((node) => ({
       id: node.data.provenance!.id,
+      kind: node.data.provenance!.kind,
       sourceName: node.data.provenance!.sourceName,
       chartType: node.data.provenance!.chartType,
       fields: node.data.provenance!.fields,
       engine: node.data.provenance!.engine,
+      schematic: node.data.provenance!.schematic,
       generatedAt: node.data.provenance!.generatedAt,
     }));
   const metadata = escapeXml(JSON.stringify({ title, figure: spec, provenance }));
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${spec.widthMm}mm" height="${spec.heightMm}mm" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(title)}"><title>${escapeXml(title)}</title><metadata>${metadata}</metadata>${background}${serializeEdges(edges, boxes)}${serializedNodes}</svg>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${spec.widthMm}mm" height="${spec.heightMm}mm" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(title)}"><title>${escapeXml(title)}</title><metadata>${metadata}</metadata>${background}${serializeNodes(backgroundNodes)}${serializeEdges(edges, boxes)}${serializeNodes(foregroundNodes)}</svg>\n`;
 }

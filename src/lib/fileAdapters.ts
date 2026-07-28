@@ -1072,6 +1072,51 @@ export function detectReferenceNode(nodes: FlowNode[]): FlowNode | undefined {
   return nodes.find((node) => node.data.kind === 'image' && node.data.imageUrl);
 }
 
+const AI_SCHEMATIC_ROLES = new Set([
+  'frame',
+  'phase',
+  'modality',
+  'token',
+  'encoder',
+  'bridge',
+  'backbone',
+  'policy',
+  'action',
+  'environment',
+  'memory',
+  'dataset',
+  'loss',
+  'annotation',
+]);
+
+const AI_ROLE_KINDS: Record<string, ShapeKind> = {
+  frame: 'group',
+  phase: 'group',
+  modality: 'rounded-rectangle',
+  token: 'rounded-rectangle',
+  encoder: 'process',
+  bridge: 'hexagon',
+  backbone: 'rounded-rectangle',
+  policy: 'rounded-rectangle',
+  action: 'rounded-rectangle',
+  environment: 'ellipse',
+  memory: 'database',
+  dataset: 'database',
+  loss: 'note',
+  annotation: 'note',
+};
+
+function boundedAiNumber(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback;
+}
+
+function safeAiColor(value: unknown, fallback: string): string {
+  if (typeof value !== 'string' || value.length > 80) return fallback;
+  const color = value.trim();
+  return /^(#[0-9a-f]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|oklch\([^)]+\)|transparent)$/i.test(color) ? color : fallback;
+}
+
 export function aiPayloadToGraph(value: unknown): { title: string; nodes: FlowNode[]; edges: FlowEdge[]; direction: 'TB' | 'LR' } {
   if (!value || typeof value !== 'object') throw new Error('AI 返回内容不是有效对象。');
   const payload = value as Record<string, unknown>;
@@ -1079,30 +1124,70 @@ export function aiPayloadToGraph(value: unknown): { title: string; nodes: FlowNo
   const rawEdges = Array.isArray(payload.edges) ? payload.edges as Array<Record<string, unknown>> : [];
   if (rawNodes.length === 0) throw new Error('AI 返回内容没有 nodes。');
   const idMap = new Map<string, string>();
+  const usedIds = new Set<string>();
   const nodes = rawNodes.map((raw, index) => {
     const sourceId = String(raw.id ?? `node-${index + 1}`);
-    const id = sourceId.replace(/\s+/g, '-');
+    const baseId = sourceId.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || `node-${index + 1}`;
+    let id = baseId;
+    let suffix = 2;
+    while (usedIds.has(id)) {
+      id = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+    usedIds.add(id);
     idMap.set(sourceId, id);
-    const kind = sanitizeKind(raw.kind);
+    const role = typeof raw.role === 'string' && AI_SCHEMATIC_ROLES.has(raw.role) ? raw.role : undefined;
+    const kind = isShapeKind(raw.kind) ? raw.kind : sanitizeKind(role ? AI_ROLE_KINDS[role] : raw.kind);
     const rawPosition = raw.position as Record<string, unknown> | undefined;
     const node = createFlowNode(kind, {
-      x: Number(rawPosition?.x) || 0,
-      y: Number(rawPosition?.y) || 0,
+      x: boundedAiNumber(rawPosition?.x, 0, -5000, 5000),
+      y: boundedAiNumber(rawPosition?.y, 0, -5000, 5000),
     }, String(raw.label ?? `步骤 ${index + 1}`), { id });
+    const width = boundedAiNumber(raw.width, Number(node.style?.width ?? SHAPE_DIMENSIONS[kind].width), 24, 2400);
+    const height = boundedAiNumber(raw.height, Number(node.style?.height ?? SHAPE_DIMENSIONS[kind].height), 24, 1800);
+    node.style = { ...node.style, width, height };
+    node.zIndex = boundedAiNumber(raw.zIndex, role === 'frame' ? -30 : role === 'phase' ? -20 : 10, -100, 1000);
+    node.selected = false;
     node.data = {
       ...node.data,
       description: typeof raw.description === 'string' ? raw.description : undefined,
-      fill: typeof raw.fill === 'string' ? raw.fill : node.data.fill,
-      stroke: typeof raw.stroke === 'string' ? raw.stroke : node.data.stroke,
+      fill: safeAiColor(raw.fill, node.data.fill),
+      stroke: safeAiColor(raw.stroke, node.data.stroke),
+      textColor: safeAiColor(raw.textColor, node.data.textColor),
+      fontSize: boundedAiNumber(raw.fontSize, node.data.fontSize, 7, 72),
+      fontWeight: boundedAiNumber(raw.fontWeight, node.data.fontWeight, 300, 900),
+      borderWidth: boundedAiNumber(raw.borderWidth, node.data.borderWidth, 0, 12),
+      radius: boundedAiNumber(raw.radius, node.data.radius, 0, 40),
+      opacity: boundedAiNumber(raw.opacity, node.data.opacity, 0.1, 1),
+      rotation: boundedAiNumber(raw.rotation, node.data.rotation, -360, 360),
+      schematicRole: role as FlowNode['data']['schematicRole'],
+      schematicDetail: role ? 'compact' : undefined,
+      scientificRole: role === 'frame' && index === 0 ? 'schematic-root' : undefined,
     };
     return node;
   });
+  const nodeIds = new Set(nodes.map((node) => node.id));
   const edges = rawEdges.flatMap((raw) => {
     const source = idMap.get(String(raw.source)) ?? String(raw.source ?? '');
     const target = idMap.get(String(raw.target)) ?? String(raw.target ?? '');
-    if (!source || !target) return [];
-    const edge = createFlowEdge(source, target, typeof raw.label === 'string' ? raw.label : undefined);
+    if (!source || !target || !nodeIds.has(source) || !nodeIds.has(target)) return [];
+    const routing = raw.routing === 'straight' || raw.routing === 'bezier' ? raw.routing : 'smoothstep';
+    const edge = createFlowEdge(source, target, typeof raw.label === 'string' ? raw.label : undefined, routing);
     if (typeof raw.id === 'string') edge.id = raw.id;
+    const lineStyle = raw.lineStyle === 'dashed' || raw.lineStyle === 'dotted' ? raw.lineStyle : 'solid';
+    const arrowStart = raw.arrowStart === 'open' || raw.arrowStart === 'closed' ? raw.arrowStart : 'none';
+    const arrowEnd = raw.arrowEnd === 'none' || raw.arrowEnd === 'open' ? raw.arrowEnd : 'closed';
+    edge.data = {
+      ...edge.data!,
+      label: typeof raw.label === 'string' ? raw.label : undefined,
+      routing,
+      lineStyle,
+      color: safeAiColor(raw.color, edge.data?.color ?? '#4B5864'),
+      width: boundedAiNumber(raw.width, edge.data?.width ?? 1.75, 0.5, 12),
+      arrowStart,
+      arrowEnd,
+    };
+    edge.selected = false;
     return [edge];
   });
   return {

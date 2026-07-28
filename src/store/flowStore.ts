@@ -29,6 +29,7 @@ import {
   estimateSvgTextWidth,
   layoutGraph,
   normalizeGraph,
+  reactFlowEdgeType,
 } from '../lib/diagram';
 import { createId } from '../lib/id';
 import { getTemplate } from '../data/templates';
@@ -530,7 +531,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
         };
         return {
           ...edge,
-          type: data.routing,
+          type: reactFlowEdgeType(data.routing),
           label: data.label,
           data,
           markerStart: createEdgeMarker(data.arrowStart, data.color),
@@ -600,7 +601,13 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       const edges = incomingEdges.flatMap((edge, index) => {
         const source = idMap.get(edge.source);
         const target = idMap.get(edge.target);
-        return source && target ? [{ ...cloneGraph(edge), id: `${edge.id}-paste-${stamp}-${index}`, source, target, selected: true }] : [];
+        return source && target ? [{
+          ...cloneGraph(edge),
+          id: `${edge.id}-paste-${stamp}-${index}`,
+          source,
+          target,
+          selected: edge.selected ?? true,
+        }] : [];
       });
       return withCheckpoint(state, {
         nodes: [...state.nodes.map((node) => ({ ...node, selected: false })), ...nodes],

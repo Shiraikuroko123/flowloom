@@ -1,6 +1,8 @@
 import {
+  Blocks,
   ChartSpline,
   CheckCircle2,
+  Cpu,
   Database,
   FileUp,
   Grid2X2,
@@ -10,12 +12,14 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react';
-import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import type {
   FlowNode,
   ScientificChartType,
   ScientificFieldMap,
   ScientificFigureSpec,
+  ScientificSchematicOptions,
+  ScientificSchematicTemplateId,
 } from '../types';
 import {
   SCIENTIFIC_FIGURE_PRESETS,
@@ -28,9 +32,18 @@ import {
   type EditableScientificChart,
   type ScientificChartOptions,
 } from '../lib/scientific';
+import {
+  DEFAULT_SCIENTIFIC_SCHEMATIC_OPTIONS,
+  SCIENTIFIC_SCHEMATIC_TEMPLATES,
+  createScientificSchematic,
+  defaultScientificSchematicTitle,
+  type EditableScientificSchematic,
+} from '../lib/scientificSchematics';
 import { IconButton } from './IconButton';
 
-type ScientificTab = 'figure' | 'chart' | 'quality';
+type ScientificTab = 'figure' | 'chart' | 'schematic' | 'quality';
+
+const SCIENTIFIC_TAB_ORDER: ScientificTab[] = ['figure', 'chart', 'schematic', 'quality'];
 
 interface ScientificDialogProps {
   open: boolean;
@@ -39,6 +52,7 @@ interface ScientificDialogProps {
   onClose: () => void;
   onConfigureFigure: (spec: ScientificFigureSpec, layoutNodes: FlowNode[]) => void;
   onInsertChart: (chart: EditableScientificChart) => void;
+  onInsertSchematic: (schematic: EditableScientificSchematic) => void;
 }
 
 const DEFAULT_FIGURE: ScientificFigureSpec = {
@@ -337,6 +351,246 @@ function ChartEditor({
   );
 }
 
+function previewNumber(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function previewLabelLines(value: string, width: number): string[] {
+  const limit = Math.max(8, Math.floor(width / 9));
+  const explicit = value.split(/\r?\n/).map((part) => part.trim()).filter(Boolean);
+  if (explicit.length > 1) return explicit.slice(0, 3);
+  const wrap = (segment: string): string[] => {
+    const trimmed = segment.trim();
+    if (!trimmed) return [];
+    const characters = Array.from(trimmed);
+    if (characters.length <= limit) return [trimmed];
+    const words = trimmed.split(/\s+/).filter(Boolean);
+    if (words.length === 1) {
+      const chunks: string[] = [];
+      for (let index = 0; index < characters.length; index += limit) {
+        chunks.push(characters.slice(index, index + limit).join(''));
+      }
+      return chunks;
+    }
+    const lines: string[] = [];
+    let line = '';
+    for (const word of words) {
+      if (line && Array.from(`${line} ${word}`).length > limit) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = line ? `${line} ${word}` : word;
+      }
+    }
+    if (line) lines.push(line);
+    return lines;
+  };
+  const lines = value.split(/\r?\n/).flatMap(wrap);
+  if (lines.length <= 3) return lines.length ? lines : [''];
+  const visible = lines.slice(0, 3);
+  visible[2] = `${Array.from(visible[2]).slice(0, Math.max(1, limit - 1)).join('')}…`;
+  return visible;
+}
+
+function SchematicPreview({ schematic }: { schematic: EditableScientificSchematic }) {
+  const markerPrefix = useId().replaceAll(':', '');
+  const boxes = new Map(schematic.nodes.map((node) => [node.id, {
+    x: node.position.x,
+    y: node.position.y,
+    width: previewNumber(node.style?.width, 160),
+    height: previewNumber(node.style?.height, 72),
+  }]));
+  const edgePath = (edge: EditableScientificSchematic['edges'][number]) => {
+    const source = boxes.get(edge.source);
+    const target = boxes.get(edge.target);
+    if (!source || !target) return '';
+    const sourceCenter = { x: source.x + source.width / 2, y: source.y + source.height / 2 };
+    const targetCenter = { x: target.x + target.width / 2, y: target.y + target.height / 2 };
+    const horizontal = Math.abs(targetCenter.x - sourceCenter.x) >= Math.abs(targetCenter.y - sourceCenter.y);
+    const from = horizontal
+      ? { x: targetCenter.x >= sourceCenter.x ? source.x + source.width : source.x, y: sourceCenter.y }
+      : { x: sourceCenter.x, y: targetCenter.y >= sourceCenter.y ? source.y + source.height : source.y };
+    const to = horizontal
+      ? { x: targetCenter.x >= sourceCenter.x ? target.x : target.x + target.width, y: targetCenter.y }
+      : { x: targetCenter.x, y: targetCenter.y >= sourceCenter.y ? target.y : target.y + target.height };
+    if (edge.data?.routing === 'bezier') {
+      const bend = Math.max(70, Math.abs(to.x - from.x) * 0.38);
+      return `M ${from.x} ${from.y} C ${from.x + bend} ${from.y}, ${to.x - bend} ${to.y}, ${to.x} ${to.y}`;
+    }
+    if (edge.data?.routing === 'straight') return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
+    if (horizontal) {
+      const middle = (from.x + to.x) / 2;
+      return `M ${from.x} ${from.y} L ${middle} ${from.y} L ${middle} ${to.y} L ${to.x} ${to.y}`;
+    }
+    const middle = (from.y + to.y) / 2;
+    return `M ${from.x} ${from.y} L ${from.x} ${middle} L ${to.x} ${middle} L ${to.x} ${to.y}`;
+  };
+  const sortedNodes = [...schematic.nodes].sort((left, right) => (left.zIndex ?? 0) - (right.zIndex ?? 0));
+  const backgroundNodes = sortedNodes.filter((node) => node.data.schematicRole === 'frame' || node.data.schematicRole === 'phase');
+  const foregroundNodes = sortedNodes.filter((node) => node.data.schematicRole !== 'frame' && node.data.schematicRole !== 'phase');
+  const renderNode = (node: FlowNode) => {
+    const box = boxes.get(node.id)!;
+    const isFrame = node.data.schematicRole === 'frame' || node.data.schematicRole === 'phase';
+    const lines = previewLabelLines(node.data.label, box.width);
+    const fontSize = isFrame ? Math.min(16, node.data.fontSize) : Math.min(14, node.data.fontSize);
+    const startY = isFrame ? box.y + 25 : box.y + box.height / 2 - (lines.length - 1) * fontSize * 0.56 + fontSize * 0.34;
+    return (
+      <g key={node.id}>
+        {node.data.kind === 'ellipse' ? (
+          <ellipse cx={box.x + box.width / 2} cy={box.y + box.height / 2} rx={box.width / 2} ry={box.height / 2} fill={node.data.fill} stroke={node.data.stroke} strokeWidth={node.data.borderWidth} />
+        ) : (
+          <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={node.data.radius} fill={node.data.fill} stroke={node.data.stroke} strokeWidth={node.data.borderWidth} />
+        )}
+        {lines.map((line, index) => (
+          <text
+            key={`${node.id}-${index}`}
+            x={isFrame ? box.x + 13 : box.x + box.width / 2}
+            y={startY + index * fontSize * 1.18}
+            fill={node.data.textColor}
+            fontSize={fontSize}
+            fontWeight={node.data.fontWeight}
+            textAnchor={isFrame ? 'start' : 'middle'}
+          >{line}</text>
+        ))}
+      </g>
+    );
+  };
+  return (
+    <svg
+      className="schematic-svg-preview"
+      viewBox={`0 0 ${schematic.width} ${schematic.height}`}
+      role="img"
+      aria-label={`${schematic.title} 结构预览`}
+    >
+      <defs>
+        {schematic.edges.map((edge, index) => (
+          <marker key={edge.id} id={`${markerPrefix}-arrow-${index}`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 1 1 L 9 5 L 1 9 Z" fill={edge.data?.color ?? '#4B5864'} />
+          </marker>
+        ))}
+      </defs>
+      {backgroundNodes.map(renderNode)}
+      {schematic.edges.map((edge, index) => (
+        <path
+          key={edge.id}
+          d={edgePath(edge)}
+          fill="none"
+          stroke={edge.data?.color ?? '#4B5864'}
+          strokeWidth={edge.data?.width ?? 1.65}
+          strokeDasharray={edge.data?.lineStyle === 'dashed' ? '8 6' : edge.data?.lineStyle === 'dotted' ? '2 5' : undefined}
+          markerEnd={edge.data?.arrowEnd === 'none' ? undefined : `url(#${markerPrefix}-arrow-${index})`}
+        />
+      ))}
+      {foregroundNodes.map(renderNode)}
+    </svg>
+  );
+}
+
+function SchematicEditor({
+  options,
+  schematic,
+  onChange,
+}: {
+  options: ScientificSchematicOptions;
+  schematic: EditableScientificSchematic;
+  onChange: (value: ScientificSchematicOptions) => void;
+}) {
+  const selectedTemplate = SCIENTIFIC_SCHEMATIC_TEMPLATES.find((template) => template.id === options.templateId) ?? SCIENTIFIC_SCHEMATIC_TEMPLATES[0];
+  const selectTemplate = (templateId: ScientificSchematicTemplateId) => onChange({
+    ...options,
+    templateId,
+    title: defaultScientificSchematicTitle(templateId, options.language),
+  });
+  const selectLanguage = (language: ScientificSchematicOptions['language']) => onChange({
+    ...options,
+    language,
+    title: defaultScientificSchematicTitle(options.templateId, language),
+  });
+  return (
+    <div className="scientific-schematic-workspace">
+      <section className="scientific-schematic-config" aria-label="论文示意图配置">
+        <div className="scientific-section-heading">
+          <div><strong>结构原型</strong><span>来自公开论文构图规律的重新设计</span></div>
+        </div>
+        <div className="schematic-template-list" role="group" aria-label="论文示意图原型">
+          {SCIENTIFIC_SCHEMATIC_TEMPLATES.map((template) => {
+            const active = template.id === options.templateId;
+            return (
+              <button
+                key={template.id}
+                className={active ? 'is-active' : ''}
+                aria-pressed={active}
+                onClick={() => selectTemplate(template.id)}
+              >
+                <span className={`schematic-template-glyph schematic-template-glyph--${template.id}`} aria-hidden="true">
+                  <i /><i /><i /><i />
+                </span>
+                <span><strong>{template.name}</strong><small>{template.focus}</small></span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="scientific-section-heading scientific-section-heading--divided">
+          <div><strong>论文图样式</strong><span>颜色仅承担模块角色，不作为装饰</span></div>
+        </div>
+        <label className="field-stack">
+          <span className="field-label">图题</span>
+          <input value={options.title} onChange={(event) => onChange({ ...options, title: event.target.value })} />
+        </label>
+        <label className="field-stack">
+          <span className="field-label">核心主干名称</span>
+          <input value={options.backbone} onChange={(event) => onChange({ ...options, backbone: event.target.value })} placeholder="VLM Backbone" />
+        </label>
+        <div className="schematic-option-row">
+          <div className="field-stack">
+            <span className="field-label">视觉风格</span>
+            <div className="scientific-segmented" role="group" aria-label="示意图视觉风格">
+              {([
+                ['conference', '柔彩分区'],
+                ['technical', '克制科技'],
+                ['monochrome', '黑白友好'],
+              ] as const).map(([value, label]) => <button key={value} className={options.style === value ? 'is-active' : ''} aria-pressed={options.style === value} onClick={() => onChange({ ...options, style: value })}>{label}</button>)}
+            </div>
+          </div>
+          <div className="field-stack">
+            <span className="field-label">结构密度</span>
+            <div className="scientific-segmented" role="group" aria-label="示意图结构密度">
+              {([
+                ['compact', '精简'],
+                ['standard', '标准'],
+                ['detailed', '详细'],
+              ] as const).map(([value, label]) => <button key={value} className={options.density === value ? 'is-active' : ''} aria-pressed={options.density === value} onClick={() => onChange({ ...options, density: value })}>{label}</button>)}
+            </div>
+          </div>
+        </div>
+        <div className="field-stack">
+          <span className="field-label">图中文字</span>
+          <div className="scientific-segmented scientific-segmented--short" role="group" aria-label="示意图文字语言">
+            <button className={options.language === 'en' ? 'is-active' : ''} aria-pressed={options.language === 'en'} onClick={() => selectLanguage('en')}>English</button>
+            <button className={options.language === 'zh' ? 'is-active' : ''} aria-pressed={options.language === 'zh'} onClick={() => selectLanguage('zh')}>中文</button>
+          </div>
+        </div>
+      </section>
+
+      <section className="scientific-preview-pane scientific-schematic-preview" aria-label="论文示意图预览">
+        <div className="scientific-preview-header">
+          <strong>原生图元预览</strong>
+          <span>{schematic.nodes.length} 个对象 · {schematic.edges.length} 条连接</span>
+        </div>
+        <div className="schematic-preview-stage"><SchematicPreview schematic={schematic} /></div>
+        <div className="schematic-reference-strip">
+          <span><Cpu size={14} />构图研究</span>
+          <div>{selectedTemplate.references.map((reference) => (
+            <a key={`${reference.arxivId}-${reference.figure}`} href={`https://arxiv.org/abs/${reference.arxivId}`} target="_blank" rel="noreferrer">{reference.title} · {reference.figure}</a>
+          ))}</div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function QualityView({ nodes, figure }: { nodes: FlowNode[]; figure?: ScientificFigureSpec }) {
   const issues = useMemo(() => auditScientificFigure(nodes, figure), [figure, nodes]);
   const counts = {
@@ -367,7 +621,7 @@ function QualityView({ nodes, figure }: { nodes: FlowNode[]; figure?: Scientific
   );
 }
 
-export function ScientificDialog({ open, nodes, figure, onClose, onConfigureFigure, onInsertChart }: ScientificDialogProps) {
+export function ScientificDialog({ open, nodes, figure, onClose, onConfigureFigure, onInsertChart, onInsertSchematic }: ScientificDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const [tab, setTab] = useState<ScientificTab>('figure');
@@ -384,6 +638,7 @@ export function ScientificDialog({ open, nodes, figure, onClose, onConfigureFigu
   const [previewSpec, setPreviewSpec] = useState<Record<string, unknown> | null>(null);
   const [previewError, setPreviewError] = useState('');
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [schematicOptions, setSchematicOptions] = useState<ScientificSchematicOptions>(DEFAULT_SCIENTIFIC_SCHEMATIC_OPTIONS);
   const [applying, setApplying] = useState(false);
 
   useEffect(() => {
@@ -406,6 +661,8 @@ export function ScientificDialog({ open, nodes, figure, onClose, onConfigureFigu
     units: { [fields.x]: xUnit, [fields.y]: yUnit },
     uncertaintyDefinition: uncertainty,
   }), [chartTitle, chartType, fields, sourceData, sourceName, uncertainty, xUnit, yUnit]);
+
+  const schematic = useMemo(() => createScientificSchematic(schematicOptions), [schematicOptions]);
 
   useEffect(() => {
     if (!open || tab !== 'chart') return;
@@ -490,6 +747,30 @@ export function ScientificDialog({ open, nodes, figure, onClose, onConfigureFigu
     }
   };
 
+  const insertSchematic = () => {
+    setApplying(true);
+    try {
+      onInsertSchematic(schematic);
+      onClose();
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const currentIndex = SCIENTIFIC_TAB_ORDER.indexOf(tab);
+    let nextIndex = currentIndex;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % SCIENTIFIC_TAB_ORDER.length;
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + SCIENTIFIC_TAB_ORDER.length) % SCIENTIFIC_TAB_ORDER.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = SCIENTIFIC_TAB_ORDER.length - 1;
+    else return;
+    event.preventDefault();
+    const nextTab = SCIENTIFIC_TAB_ORDER[nextIndex];
+    setTab(nextTab);
+    event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+  };
+
   return (
     <dialog
       ref={dialogRef}
@@ -501,16 +782,22 @@ export function ScientificDialog({ open, nodes, figure, onClose, onConfigureFigu
       <div className="dialog-header scientific-dialog__header">
         <div className="dialog-title">
           <span className="dialog-title__icon"><ChartSpline size={18} /></span>
-          <div><h2 id={titleId}>科研绘图工作台</h2><p>多面板图版、数据可视化与投稿前检查</p></div>
+          <div><h2 id={titleId}>科研绘图工作台</h2><p>论文示意图、数据可视化、多面板图版与投稿前检查</p></div>
         </div>
         <IconButton label="关闭" icon={<X size={18} />} onClick={onClose} />
       </div>
       <div className="scientific-tabs" role="tablist" aria-label="科研绘图任务">
-        <button role="tab" aria-selected={tab === 'figure'} className={tab === 'figure' ? 'is-active' : ''} onClick={() => setTab('figure')}><Grid2X2 size={16} />图版</button>
-        <button role="tab" aria-selected={tab === 'chart'} className={tab === 'chart' ? 'is-active' : ''} onClick={() => setTab('chart')}><ChartSpline size={16} />数据图表</button>
-        <button role="tab" aria-selected={tab === 'quality'} className={tab === 'quality' ? 'is-active' : ''} onClick={() => setTab('quality')}><ScanSearch size={16} />质量检查</button>
+        <button id={`${titleId}-tab-figure`} role="tab" aria-controls={`${titleId}-panel`} aria-selected={tab === 'figure'} tabIndex={tab === 'figure' ? 0 : -1} className={tab === 'figure' ? 'is-active' : ''} onKeyDown={handleTabKeyDown} onClick={() => setTab('figure')}><Grid2X2 size={16} />图版</button>
+        <button id={`${titleId}-tab-chart`} role="tab" aria-controls={`${titleId}-panel`} aria-selected={tab === 'chart'} tabIndex={tab === 'chart' ? 0 : -1} className={tab === 'chart' ? 'is-active' : ''} onKeyDown={handleTabKeyDown} onClick={() => setTab('chart')}><ChartSpline size={16} />数据图表</button>
+        <button id={`${titleId}-tab-schematic`} role="tab" aria-controls={`${titleId}-panel`} aria-selected={tab === 'schematic'} tabIndex={tab === 'schematic' ? 0 : -1} className={tab === 'schematic' ? 'is-active' : ''} onKeyDown={handleTabKeyDown} onClick={() => setTab('schematic')}><Blocks size={16} />论文示意图</button>
+        <button id={`${titleId}-tab-quality`} role="tab" aria-controls={`${titleId}-panel`} aria-selected={tab === 'quality'} tabIndex={tab === 'quality' ? 0 : -1} className={tab === 'quality' ? 'is-active' : ''} onKeyDown={handleTabKeyDown} onClick={() => setTab('quality')}><ScanSearch size={16} />质量检查</button>
       </div>
-      <div className="scientific-dialog__body">
+      <div
+        id={`${titleId}-panel`}
+        className="scientific-dialog__body"
+        role="tabpanel"
+        aria-labelledby={`${titleId}-tab-${tab}`}
+      >
         {tab === 'figure' && <FigureEditor value={figureDraft} onChange={setFigureDraft} />}
         {tab === 'chart' && (
           <ChartEditor
@@ -535,15 +822,18 @@ export function ScientificDialog({ open, nodes, figure, onClose, onConfigureFigu
             onUncertainty={setUncertainty}
           />
         )}
+        {tab === 'schematic' && <SchematicEditor options={schematicOptions} schematic={schematic} onChange={setSchematicOptions} />}
         {tab === 'quality' && <QualityView nodes={nodes} figure={figure} />}
       </div>
       <div className="dialog-footer scientific-dialog__footer">
         <span className="scientific-footer-status">
           {tab === 'chart' && (previewBusy ? <><LoaderCircle className="spin" size={14} />正在生成</> : previewError ? <><TriangleAlert size={14} />需要修正数据映射</> : <><CheckCircle2 size={14} />可转换为可编辑 SVG 图元</>)}
+          {tab === 'schematic' && <><Blocks size={14} />{schematic.nodes.length} 个原生对象，插入后可逐项编辑</>}
         </span>
         <button className="secondary-button" onClick={onClose}>取消</button>
         {tab === 'figure' && <button className="primary-button" disabled={applying} onClick={applyFigure}>{applying && <LoaderCircle className="spin" size={15} />}应用图版</button>}
         {tab === 'chart' && <button className="primary-button" disabled={applying || previewBusy || Boolean(previewError) || !previewSvg} onClick={() => void insertChart()}>{applying && <LoaderCircle className="spin" size={15} />}插入可编辑图表</button>}
+        {tab === 'schematic' && <button className="primary-button" disabled={applying} onClick={insertSchematic}>{applying && <LoaderCircle className="spin" size={15} />}插入可编辑示意图</button>}
       </div>
     </dialog>
   );

@@ -5,7 +5,7 @@ const SHAPE_CATALOG = VISIBLE_SHAPES
   .map((definition) => `${definition.kind}=${definition.label}`)
   .join(', ');
 
-const SYSTEM_PROMPT = `You are a senior process architect. Convert the user's context into one precise editable flowchart.
+const FLOWCHART_SYSTEM_PROMPT = `You are a senior process architect. Convert the user's context into one precise editable flowchart.
 Return only a JSON object with this schema:
 {
   "title": "short diagram title",
@@ -23,6 +23,62 @@ Rules:
 - Prefer standard flowchart shapes unless the user explicitly requests BPMN or UML notation.
 - Do not wrap JSON in markdown fences and do not add commentary.`;
 
+const SCIENTIFIC_SCHEMATIC_SYSTEM_PROMPT = `You are a senior scientific figure designer specializing in LLM, VLM, VLA, robotics, and embodied-intelligence papers. Convert the user's material into an original, publication-ready system schematic made only from editable nodes and edges. Do not copy a paper figure pixel-for-pixel and do not return a bitmap.
+Return only one JSON object with this schema:
+{
+  "title": "short paper-figure title",
+  "direction": "LR",
+  "nodes": [{
+    "id": "stable-ascii-id",
+    "label": "concise visible label",
+    "description": "optional short secondary line",
+    "role": "frame|phase|modality|token|encoder|bridge|backbone|policy|action|environment|memory|dataset|loss|annotation",
+    "kind": "supported shape id",
+    "position": {"x": 0, "y": 0},
+    "width": 180,
+    "height": 76,
+    "fill": "#RRGGBB",
+    "stroke": "#RRGGBB",
+    "textColor": "#RRGGBB",
+    "fontSize": 13,
+    "fontWeight": 650,
+    "borderWidth": 1.5,
+    "radius": 6,
+    "zIndex": 10
+  }],
+  "edges": [{
+    "source": "node-id",
+    "target": "node-id",
+    "label": "optional information flow",
+    "routing": "smoothstep|straight|bezier",
+    "lineStyle": "solid|dashed|dotted",
+    "color": "#RRGGBB",
+    "width": 1.7,
+    "arrowEnd": "closed|open|none"
+  }]
+}
+Scientific-figure rules:
+- Use an explicit coordinate system around 0..1320 x 0..700. Every node needs position, width, and height.
+- The first node must be a large role=frame, kind=group background with zIndex=-30. Add 2-4 role=phase kind=group regions with zIndex=-20 when the architecture has stages. Foreground modules use zIndex=10.
+- Keep all foreground modules inside the frame and avoid overlaps. Leave at least 24 px between adjacent modules and enough whitespace for edge labels.
+- Use 12-30 foreground modules. Labels should be short enough for their boxes; use description for the second line.
+- Prefer a strong reading order, usually left-to-right: inputs -> encoding -> backbone/reasoning -> policy/output -> environment. Use a loop only when feedback is semantically real.
+- Show modality roles, token or feature flow, trainable versus frozen modules, training versus inference, losses, memory/world model, action chunks, and robot feedback only when supported by the source.
+- Use solid arrows for forward computation, dashed arrows for training/control dependencies, dotted arrows for auxiliary signals, and bezier dashed arrows for feedback loops.
+- Use a restrained print-safe role palette: blue modalities, green encoders, amber tokens/data, violet backbones, rose policies, blue actions, pale green environments, neutral phase regions. Never use gradients, shadows, transparency, decorative blobs, or tiny text.
+- One color must have one semantic role. Maintain dark text and visible borders. For black-and-white requests, use white/gray fills plus line-style redundancy.
+- Supported shape ids: ${SHAPE_CATALOG}. Prefer group for regions, rounded-rectangle for modules, database for datasets/memory, ellipse for robot/environment, note for annotations, and hexagon for planning/bridges.
+- Preserve concrete model names, modalities, datasets, losses, action spaces, time horizons, robot embodiments, and training stages from the source. Do not invent benchmark results.
+- Do not wrap JSON in markdown fences and do not add commentary.`;
+
+export function isScientificAiScenario(scenario: string): boolean {
+  return /论文|大模型|多模态|VLM|VLA|具身|训练.*推理|scientific|paper|embodied/i.test(scenario);
+}
+
+function systemPrompt(request: AiDiagramRequest): string {
+  return isScientificAiScenario(request.scenario) ? SCIENTIFIC_SCHEMATIC_SYSTEM_PROMPT : FLOWCHART_SYSTEM_PROMPT;
+}
+
 function stripCodeFence(value: string): string {
   const trimmed = value.trim();
   if (!trimmed.startsWith('```')) return trimmed;
@@ -36,6 +92,7 @@ function endpoint(baseUrl: string): string {
 }
 
 function buildUserContent(request: AiDiagramRequest): unknown {
+  const scientific = isScientificAiScenario(request.scenario);
   const context = [
     request.scenario ? `Scenario: ${request.scenario}` : '',
     request.prompt,
@@ -44,7 +101,12 @@ function buildUserContent(request: AiDiagramRequest): unknown {
   const images = request.attachments.filter((item) => item.kind === 'image');
   if (images.length === 0) return context;
   return [
-    { type: 'text', text: `${context}\n\nReconstruct the supplied diagram/reference images as structured nodes and edges.` },
+    {
+      type: 'text',
+      text: scientific
+        ? `${context}\n\nAnalyze the supplied paper/reference image for semantic structure and visual hierarchy, then create an original editable scientific schematic with the same factual content. Do not trace pixels or return a bitmap.`
+        : `${context}\n\nReconstruct the supplied diagram/reference images as structured nodes and edges.`,
+    },
     ...images.map((item) => ({ type: 'image_url', image_url: { url: item.content, detail: 'high' } })),
   ];
 }
@@ -61,7 +123,7 @@ async function requestCompletion(request: AiDiagramRequest, useResponseFormat: b
       model: request.config.model,
       temperature: 0.15,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt(request) },
         { role: 'user', content: buildUserContent(request) },
       ],
       ...(useResponseFormat ? { response_format: { type: 'json_object' } } : {}),

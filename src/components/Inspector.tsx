@@ -15,6 +15,7 @@ import {
   ArrowLeftRight,
   ArrowRightToLine,
   ArrowUp,
+  Blocks,
   BringToFront,
   Database,
   Download,
@@ -294,10 +295,16 @@ export function Inspector({ open, nodes, edges, onOpenAi }: InspectorProps) {
 
               {node.data.provenance && (
                 <section className="inspector-section scientific-provenance">
-                  <h2><Database size={15} />科研数据来源</h2>
+                  <h2>
+                    {node.data.provenance.kind === 'scientific-schematic' ? <Blocks size={15} /> : <Database size={15} />}
+                    {node.data.provenance.kind === 'scientific-schematic' ? '论文构图来源' : '科研数据来源'}
+                  </h2>
                   <dl>
                     <div><dt>来源</dt><dd>{node.data.provenance.sourceName}</dd></div>
                     {node.data.provenance.chartType && <div><dt>图表</dt><dd>{node.data.provenance.chartType}</dd></div>}
+                    {node.data.provenance.schematic && <div><dt>方式</dt><dd>{node.data.provenance.schematic.generatedBy === 'ai' ? 'AI 结构生成' : '原生模板'}</dd></div>}
+                    {node.data.provenance.schematic && <div><dt>样式</dt><dd>{node.data.provenance.schematic.style} · {node.data.provenance.schematic.density}</dd></div>}
+                    {node.data.provenance.schematic?.references?.length && <div><dt>论文</dt><dd>{node.data.provenance.schematic.references.map((id) => `arXiv:${id}`).join(' · ')}</dd></div>}
                     {node.data.provenance.fields && (
                       <div><dt>映射</dt><dd>{Object.entries(node.data.provenance.fields).filter(([, value]) => value).map(([key, value]) => `${key}: ${value}`).join(' · ')}</dd></div>
                     )}
@@ -307,7 +314,17 @@ export function Inspector({ open, nodes, edges, onOpenAi }: InspectorProps) {
                   {node.data.provenance.uncertainty?.definition && <p><strong>误差定义：</strong>{node.data.provenance.uncertainty.definition}</p>}
                   <div className="provenance-actions">
                     {node.data.provenance.sourceData && (
-                      <button className="secondary-button" onClick={() => downloadInspectorData(node.data.provenance!.sourceName || 'source.csv', node.data.provenance!.sourceData!, 'text/csv;charset=utf-8')}><Download size={15} />原始数据</button>
+                      <button
+                        className="secondary-button"
+                        onClick={() => {
+                          const schematic = node.data.provenance!.kind === 'scientific-schematic';
+                          downloadInspectorData(
+                            schematic ? `${node.data.provenance!.sourceName || 'schematic'}.json` : node.data.provenance!.sourceName || 'source.csv',
+                            node.data.provenance!.sourceData!,
+                            schematic ? 'application/json;charset=utf-8' : 'text/csv;charset=utf-8',
+                          );
+                        }}
+                      ><Download size={15} />{node.data.provenance.kind === 'scientific-schematic' ? '构图元数据' : '原始数据'}</button>
                     )}
                     {node.data.provenance.chartSpec && (
                       <button className="secondary-button" onClick={() => downloadInspectorData(`${node.data.provenance!.sourceName || 'chart'}.vl.json`, JSON.stringify(node.data.provenance!.chartSpec, null, 2), 'application/json;charset=utf-8')}><FileJson size={15} />图表规范</button>
