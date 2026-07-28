@@ -16,6 +16,7 @@ import type {
   FlowEdgeData,
   FlowNode,
   FlowNodeData,
+  ScientificFigureSpec,
 } from '../types';
 import {
   cloneGraph,
@@ -93,6 +94,7 @@ interface FlowState {
   layout: (direction: 'TB' | 'LR') => void;
   loadGraph: (title: string, nodes: FlowNode[], edges: FlowEdge[]) => void;
   loadDocument: (title: string, pages: DiagramPage[], activePageId?: string) => void;
+  configureScientificFigure: (spec: ScientificFigureSpec, layoutNodes: FlowNode[]) => void;
   loadTemplate: (id: string) => void;
   restoreDraft: (draft: RestorableDocument) => void;
   newDocument: () => void;
@@ -149,6 +151,7 @@ function normalizePage(page: DiagramPage, index: number): DiagramPage {
     nodes,
     edges: graph.edges,
     layers,
+    scientific: page.scientific,
   };
 }
 
@@ -591,7 +594,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
           parentId,
           position: parentId ? node.position : { x: node.position.x + offset, y: node.position.y + offset },
           data: { ...cloneGraph(node.data), layerId },
-          selected: true,
+          selected: node.selected ?? true,
         };
       });
       const edges = incomingEdges.flatMap((edge, index) => {
@@ -842,6 +845,36 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       ...activePageState(active),
       lastSavedAt: null,
     }));
+  },
+
+  configureScientificFigure: (spec, layoutNodes) => {
+    set((state) => {
+      const fallbackLayerId = editableLayerId(state.layers, state.activeLayerId);
+      if (!fallbackLayerId) return state;
+      const removedIds = new Set(state.nodes
+        .filter((node) => Boolean(node.data.scientificRole) && node.data.scientificRole !== 'chart-root')
+        .map((node) => node.id));
+      const retainedNodes = state.nodes
+        .filter((node) => !removedIds.has(node.id))
+        .map((node) => ({ ...node, selected: false }));
+      const nodes = [
+        ...retainedNodes,
+        ...layoutNodes.map((node) => ({
+          ...cloneGraph(node),
+          selected: false,
+          draggable: !node.data.locked,
+          data: { ...cloneGraph(node.data), layerId: fallbackLayerId },
+        })),
+      ];
+      const edges = state.edges
+        .filter((edge) => !removedIds.has(edge.source) && !removedIds.has(edge.target))
+        .map((edge) => ({ ...edge, selected: false }));
+      const checkpoint = withCheckpoint(state, { nodes, edges });
+      const pages = (checkpoint.pages ?? state.pages).map((page) => page.id === state.activePageId
+        ? { ...page, scientific: cloneGraph(spec) }
+        : page);
+      return { ...checkpoint, pages };
+    });
   },
 
   loadTemplate: (id) => {

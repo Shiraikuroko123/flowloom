@@ -16,6 +16,9 @@ import {
   ArrowRightToLine,
   ArrowUp,
   BringToFront,
+  Database,
+  Download,
+  FileJson,
   Group,
   LockKeyhole,
   RotateCw,
@@ -55,6 +58,15 @@ const swatches = [
 
 const categoryOrder: Exclude<ShapeCategory, 'internal'>[] = ['flowchart', 'bpmn', 'uml', 'erd', 'architecture', 'basic', 'container'];
 const arrowLabels: Record<ArrowHead, string> = { none: '无', open: '开放', closed: '实心' };
+
+function downloadInspectorData(filename: string, content: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename.replace(/[\\/:*?"<>|]+/g, '-');
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <span className="field-label">{children}</span>;
@@ -279,6 +291,30 @@ export function Inspector({ open, nodes, edges, onOpenAi }: InspectorProps) {
                 </label>
               </section>
               </div>
+
+              {node.data.provenance && (
+                <section className="inspector-section scientific-provenance">
+                  <h2><Database size={15} />科研数据来源</h2>
+                  <dl>
+                    <div><dt>来源</dt><dd>{node.data.provenance.sourceName}</dd></div>
+                    {node.data.provenance.chartType && <div><dt>图表</dt><dd>{node.data.provenance.chartType}</dd></div>}
+                    {node.data.provenance.fields && (
+                      <div><dt>映射</dt><dd>{Object.entries(node.data.provenance.fields).filter(([, value]) => value).map(([key, value]) => `${key}: ${value}`).join(' · ')}</dd></div>
+                    )}
+                    {node.data.provenance.engine && <div><dt>引擎</dt><dd>{node.data.provenance.engine}</dd></div>}
+                    <div><dt>生成时间</dt><dd>{new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(node.data.provenance.generatedAt))}</dd></div>
+                  </dl>
+                  {node.data.provenance.uncertainty?.definition && <p><strong>误差定义：</strong>{node.data.provenance.uncertainty.definition}</p>}
+                  <div className="provenance-actions">
+                    {node.data.provenance.sourceData && (
+                      <button className="secondary-button" onClick={() => downloadInspectorData(node.data.provenance!.sourceName || 'source.csv', node.data.provenance!.sourceData!, 'text/csv;charset=utf-8')}><Download size={15} />原始数据</button>
+                    )}
+                    {node.data.provenance.chartSpec && (
+                      <button className="secondary-button" onClick={() => downloadInspectorData(`${node.data.provenance!.sourceName || 'chart'}.vl.json`, JSON.stringify(node.data.provenance!.chartSpec, null, 2), 'application/json;charset=utf-8')}><FileJson size={15} />图表规范</button>
+                    )}
+                  </div>
+                </section>
+              )}
 
               <section className="inspector-section">
                 <h2>排列</h2>

@@ -643,6 +643,9 @@ function parseNative(value: Record<string, unknown>, title: string): ImportResul
         layers: Array.isArray(page.layers) && page.layers.length
           ? page.layers as DiagramPage['layers']
           : [createDefaultLayer()],
+        scientific: page.scientific && typeof page.scientific === 'object'
+          ? page.scientific as DiagramPage['scientific']
+          : undefined,
       };
     });
     if (pages.length === 0) throw new Error('Flowloom JSON 中没有可识别的页面。');

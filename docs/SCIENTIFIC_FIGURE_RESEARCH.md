@@ -1,0 +1,63 @@
+# Flowloom 科研绘图开源调研
+
+更新时间：2026-07-28。Star 数来自当日 GitHub API 快照，只用于衡量社区规模，不代表技术质量或许可证授权范围。
+
+## 调研结论
+
+科研绘图不是“多放一些实验室图标”。面向论文的工具至少要同时处理数据诚信、精确物理尺寸、可编辑矢量图、多面板排版、颜色可访问性、来源追溯和出版前检查。Flowloom 采用分层路线：
+
+1. Vega-Lite/Vega 负责数据到 SVG 的可复现语法和统计图形。
+2. Flowloom 的 SVG 解析器把生成结果拆为独立路径、文字和几何图元。
+3. 页面保存毫米尺寸、目标 DPI、面板网格和导出边界。
+4. 图表根组保存原始 CSV、字段映射、单位、误差定义、图表规范和引擎版本。
+5. 自动检查只报告可解释的问题，不宣称通过 Nature、Science 或任何期刊认证。
+
+## 科研绘图 Skills
+
+| 项目 | 许可 / 社区 | 借鉴内容 | Flowloom 处理 |
+| --- | --- | --- | --- |
+| [K-Dense-AI/scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills) | MIT，31,949 stars | `scientific-visualization` 强调原始数据与变换溯源、误差/缺失值、精确物理尺寸、Okabe-Ito 配色、最终尺寸检查 | 已纳入第一版的 provenance、单位/误差定义、毫米图版、Okabe-Ito 色板和质量检查；不复制其实现代码 |
+
+这一 skill 最重要的工程原则是“可追溯且不夸大”。DPI、色板和自动报告都只是检查信号，不能等同于期刊合规证明。
+
+## 开源工程对比
+
+| 项目 | 许可 / 社区 | 强项 | 采纳决策 |
+| --- | --- | --- | --- |
+| [vega/vega-lite](https://github.com/vega/vega-lite) | BSD-3-Clause，5,423 stars | 声明式统计图、组合视图、SVG 输出、可复现规范 | 已集成 `vega-lite 6.4.3` 与 `vega 6.3.1`，按需加载；生成 SVG 后转为 Flowloom 可编辑图元 |
+| [penrose/penrose](https://github.com/penrose/penrose) | MIT，7,962 stars | 用约束和声明描述数学、物理及算法示意图 | 作为后续“声明式科研示意图语言”的首选参考，不在首版直接引入第二套约束运行时 |
+| [cytoscape/cytoscape.js](https://github.com/cytoscape/cytoscape.js) | MIT，11,124 stars | 大规模网络、图分析、生物通路和交互布局 | 规划为网络/通路工作台引擎；首版先复用现有图模型和 Dagre，避免一次引入两个图引擎 |
+| [plotly/plotly.js](https://github.com/plotly/plotly.js) | MIT，18,270 stars | 交互统计图、3D、科学图表覆盖广 | 作为能力对标；首版选择更适合声明、版本记录和 SVG 拆解的 Vega-Lite |
+| [observablehq/plot](https://github.com/observablehq/plot) | ISC，5,331 stars | 简洁的探索性数据可视化 API | 作为易用性对标；暂不增加与 Vega-Lite 重叠的运行时 |
+| [antvis/G2](https://github.com/antvis/G2) | MIT，12,577 stars | 图形语法、组合标记和中文生态 | 作为交互与中文体验对标；当前不引入重复图表内核 |
+| [duerrsimon/bioicons](https://github.com/duerrsimon/bioicons) | 平台代码 MIT，1,710 stars | 大量生命科学图标和搜索能力 | 不整库复制。每个资产可能是 CC0、MIT、CC BY 等不同许可，后续导入必须逐项记录作者、来源、许可证和修改状态 |
+| [pkheisig/OpenSketch](https://github.com/pkheisig/OpenSketch) | AGPL-3.0 | 科研示意图编辑体验 | 仅做能力对标，不复制或改写其代码，以免把静态站点工程引入 AGPL 传播义务 |
+
+## 第一阶段已经落地
+
+- 精确毫米宽高、72–1200 DPI、行列、边距、间距和 A/B/C 面板标签。
+- 单栏、双栏、方形、A4 内容区和 16:9 常用起点；这些不是期刊认证预设。
+- CSV/TSV/分号表格解析，支持引号、缺失值和数值字段识别。
+- 散点、折线、柱状、箱线、热图和误差线。
+- Okabe-Ito 分类色板；散点用颜色+点形，折线用颜色+线型/点形进行冗余编码。
+- Vega-Lite SVG 拆解为独立 `path`、`rect`、`text` 等图元，并包装为可整体移动的图表组。
+- 图表保存原始数据、映射、单位、不确定性说明、规范和引擎版本。
+- 检查最小字号、最小线宽、透明度、图版越界、位图有效 DPI 未知、原始数据缺失和误差含义缺失。
+- 科研页面按目标毫米尺寸裁切；PNG 按目标 DPI 计算像素并写入分辨率元数据，PDF 使用毫米页面和目标 DPI 图像，SVG 写入 `mm` 物理尺寸。
+
+## 后续工程顺序
+
+1. 引入 Cytoscape.js 网络/通路工作台，并提供 GraphML、SIF、CX、GEXF 和常见生物网络格式适配器。
+2. 增加声明式科研示意图 DSL，评估 Penrose 子集或兼容适配层。
+3. 建立逐资产许可证清单后加入生命科学、化学、医学和实验装置图标。
+4. 增加 LaTeX/MathJax 公式、比例尺、显著性标注、图例生成器和共享样式。
+5. 增加 EPS、真正的矢量 PDF、TIFF/CMYK 工作流；浏览器无法可靠实现的出版转换交给可选本地 CLI，而不在静态站点中伪装支持。
+6. 建立期刊要求的可更新配置库，只显示“与某次指南规则对照”，不显示“官方认证”。
+
+## 许可证准则
+
+- MIT、BSD、ISC 等依赖必须保留其许可证文件与 npm 锁定版本。
+- GPL/AGPL 项目只做公开能力对标，除非项目整体许可策略明确改变。
+- 图标和插图的许可证按资产而不是按网站仓库判断。
+- CC BY 资产必须在图形元数据和导出清单中保留作者、来源、许可证、链接与修改记录。
+- 任何未知许可资产默认不可进入内置商用素材库。

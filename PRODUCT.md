@@ -6,11 +6,11 @@ product
 
 ## Users
 
-Product managers, engineers, operations teams, educators, analysts, and designers who create, review, or migrate structured diagrams during focused desktop work. They need quick keyboard-driven editing, dependable interchange, and a usable touch fallback.
+Researchers, scientific illustrators, analysts, product managers, engineers, operations teams, educators, and designers who create, review, or migrate structured diagrams and publication figures during focused desktop work. They need quick keyboard-driven editing, dependable interchange, traceable source data, exact physical output, and a usable touch fallback.
 
 ## Product Purpose
 
-Flowloom is a browser-native flowchart workspace that turns structured files, documents, images, and natural-language context into editable diagrams. Success means users can move from source material to a correct diagram, refine it without tool lock-in, and publish a portable result from a static deployment.
+Flowloom is a browser-native diagram and scientific-figure workspace that turns structured files, tabular data, documents, images, and natural-language context into editable graphics. Success means users can move from source material to a correct diagram or paper figure, preserve data provenance, refine it without tool lock-in, and publish a portable result from a static deployment.
 
 ## Brand Personality
 
@@ -27,6 +27,8 @@ Avoid marketing-dashboard composition, oversized cards, decorative gradients, pl
 3. Make common editing actions direct, keyboard-accessible, and recoverable through undo.
 4. Treat formats and AI providers as adapters so the static application remains portable.
 5. Use familiar professional-tool conventions, then spend personality on clarity and feedback.
+6. Treat data provenance, units, uncertainty, physical dimensions, and licensing as first-class figure data.
+7. Report publication risks with explainable checks; never present automated output as journal certification.
 
 ## Accessibility & Inclusion
 

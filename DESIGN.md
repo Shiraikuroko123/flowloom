@@ -1,6 +1,6 @@
 ---
 name: Flowloom
-description: A precise, AI-native flowchart workspace for structured editing and format migration.
+description: A precise, AI-native diagram and scientific-figure workspace for structured editing, data visualization, and format migration.
 colors:
   brand-honey: "oklch(0.680 0.170 76)"
   brand-honey-deep: "oklch(0.560 0.155 72)"
@@ -62,7 +62,7 @@ components:
 
 ## Overview
 
-Flowloom is a dense professional tool built around a white infinite canvas. Layout is predictable: command bar, reversible libraries, canvas, contextual inspector, and a compact status strip. The visual mood is a drafting desk in clear late-afternoon office light: focused, legible, and warmed only by deliberate amber actions.
+Flowloom is a dense professional tool built around a white infinite canvas. Layout is predictable: command bar, reversible libraries, canvas, contextual inspector, and a compact status strip. Scientific work opens as a task-focused workbench for physical page setup, data mapping, preview, and quality checks. The visual mood is a drafting desk in clear late-afternoon office light: focused, legible, and warmed only by deliberate amber actions.
 
 ## Colors
 
@@ -79,6 +79,8 @@ Depth comes primarily from tonal layers and hairline boundaries. Floating menus 
 ## Components
 
 Icon buttons are square, 36px visually and at least 44px on coarse pointers. Cards are limited to repeated template items and framed tools. Panels use dividers, not nested cards. Selection, hover, focus, loading, disabled, error, and success states share one vocabulary across the application.
+
+Scientific charts use the Okabe-Ito categorical palette with shape or line-style redundancy. Publication previews stay literal white even in dark application mode. Panel guides are dashed editing aids that never appear in export; provenance appears as a read-only inspector section with direct source-data downloads.
 
 ## Do's and Don'ts
 

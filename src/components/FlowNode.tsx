@@ -155,7 +155,7 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
       </div>
       )}
       </div>
-      {data.locked && <LockKeyhole className="flow-node__lock" size={13} aria-hidden="true" />}
+      {data.locked && !data.scientificRole && <LockKeyhole className="flow-node__lock" size={13} aria-hidden="true" />}
     </div>
   );
 }

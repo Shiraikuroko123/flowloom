@@ -24,6 +24,7 @@ import {
 } from '@xyflow/react';
 import {
   Bot,
+  ChartSpline,
   Check,
   ChevronDown,
   Code2,
@@ -62,6 +63,7 @@ import type {
   FlowEdge,
   FlowNode,
   ImportResult,
+  ScientificFigureSpec,
   ShapeKind,
   ToastMessage,
 } from './types';
@@ -76,6 +78,7 @@ import { useFlowStore } from './store/flowStore';
 import { createFlowNode, findOpenNodePosition } from './lib/diagram';
 import { createId } from './lib/id';
 import { getShapeDefinition, isShapeKind } from './lib/shapeRegistry';
+import type { EditableScientificChart } from './lib/scientific';
 
 const DRAFT_KEY = 'flowloom.document.v2';
 const LEGACY_DRAFT_KEY = 'flowloom.document.v1';
@@ -84,6 +87,7 @@ const nodeTypes = { flowNode: FlowNodeComponent };
 const AiDialog = lazy(() => import('./components/AiDialog').then((module) => ({ default: module.AiDialog })));
 const ImportDialog = lazy(() => import('./components/ImportDialog').then((module) => ({ default: module.ImportDialog })));
 const CodeDialog = lazy(() => import('./components/CodeDialog').then((module) => ({ default: module.CodeDialog })));
+const ScientificDialog = lazy(() => import('./components/ScientificDialog').then((module) => ({ default: module.ScientificDialog })));
 
 interface ClipboardGraph {
   nodes: FlowNode[];
@@ -97,6 +101,19 @@ interface ExportMenuProps {
   onClose: () => void;
   onExportText: (format: 'json' | 'drawio' | 'mermaid' | 'dot' | 'csv') => void;
   onExportImage: (format: 'svg' | 'png' | 'pdf') => void;
+}
+
+function downloadContent(
+  content: string,
+  filename: string,
+  type: string,
+) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function ExportMenu({ open, anchorRef, exporting, onClose, onExportText, onExportImage }: ExportMenuProps) {
@@ -221,6 +238,7 @@ function EditorApp() {
   const insertGraph = useFlowStore((state) => state.insertGraph);
   const loadGraph = useFlowStore((state) => state.loadGraph);
   const loadDocument = useFlowStore((state) => state.loadDocument);
+  const configureScientificFigure = useFlowStore((state) => state.configureScientificFigure);
   const loadTemplate = useFlowStore((state) => state.loadTemplate);
   const restoreDraft = useFlowStore((state) => state.restoreDraft);
   const newDocument = useFlowStore((state) => state.newDocument);
@@ -238,12 +256,14 @@ function EditorApp() {
   const [importOpen, setImportOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [codeOpen, setCodeOpen] = useState(false);
+  const [scientificOpen, setScientificOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [fidelity, setFidelity] = useState<FidelityLevel>('structural');
   const [sourceFormat, setSourceFormat] = useState('Flowloom');
+  const activeScientificFigure = pages.find((page) => page.id === activePageId)?.scientific;
 
   const renderedNodes = useMemo(() => {
     const layerIndex = new Map(layers.map((layer, index) => [layer.id, index]));
@@ -389,6 +409,47 @@ function EditorApp() {
     window.setTimeout(() => flow.fitView({ padding: 0.16, duration: 320 }), 80);
   }, [addToast, flow, loadGraph]);
 
+  const applyScientificFigure = useCallback((spec: ScientificFigureSpec, layoutNodes: FlowNode[]) => {
+    configureScientificFigure(spec, layoutNodes);
+    setSourceFormat('科研图版');
+    setFidelity('structural');
+    addToast({
+      tone: 'success',
+      title: '科研图版已应用',
+      detail: `${spec.widthMm} × ${spec.heightMm} mm · ${spec.rows} × ${spec.columns} 面板`,
+    });
+    window.setTimeout(() => flow.fitView({ padding: 0.08, duration: 300 }), 80);
+  }, [addToast, configureScientificFigure, flow]);
+
+  const applyScientificChart = useCallback((chart: EditableScientificChart) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const viewportCenter = flow.screenToFlowPosition({
+      x: rect ? rect.left + rect.width / 2 : window.innerWidth / 2,
+      y: rect ? rect.top + rect.height / 2 : window.innerHeight / 2,
+    });
+    const figureNode = nodes.find((node) => node.data.scientificRole === 'figure-background');
+    const figureWidth = Number.parseFloat(String(figureNode?.style?.width ?? figureNode?.measured?.width ?? ''));
+    const figureHeight = Number.parseFloat(String(figureNode?.style?.height ?? figureNode?.measured?.height ?? ''));
+    const center = figureNode && Number.isFinite(figureWidth) && Number.isFinite(figureHeight)
+      ? { x: figureNode.position.x + figureWidth / 2, y: figureNode.position.y + figureHeight / 2 }
+      : viewportCenter;
+    const positioned = chart.nodes.map((node) => node.parentId ? node : {
+      ...node,
+      position: {
+        x: center.x - chart.width / 2 + node.position.x,
+        y: center.y - chart.height / 2 + node.position.y,
+      },
+    });
+    insertGraph(positioned, [], 0);
+    setSourceFormat('科研数据图表');
+    setFidelity('structural');
+    addToast({
+      tone: 'success',
+      title: '已插入可编辑科研图表',
+      detail: `${chart.nodes.length - 1} 个 SVG 图元，原始数据已随图表保存。`,
+    });
+  }, [addToast, flow, insertGraph, nodes]);
+
   const fileName = useCallback((extension: string) => `${(title.trim() || 'flowchart').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80)}.${extension}`, [title]);
 
   const exportText = useCallback(async (format: 'json' | 'drawio' | 'mermaid' | 'dot' | 'csv') => {
@@ -421,21 +482,56 @@ function EditorApp() {
     const viewportElement = canvasRef.current?.querySelector('.react-flow__viewport') as HTMLElement | null;
     if (!viewportElement) return;
     setExporting(true);
+    canvasRef.current?.classList.add('is-exporting');
     try {
       const { toPng, toSvg } = await import('html-to-image');
-      const bounds = getNodesBounds(nodes);
-      const naturalWidth = Math.max(480, Math.ceil(bounds.width + 128));
-      const naturalHeight = Math.max(320, Math.ceil(bounds.height + 128));
-      const scale = Math.min(1, 4096 / Math.max(naturalWidth, naturalHeight));
-      const width = Math.round(naturalWidth * scale);
-      const height = Math.round(naturalHeight * scale);
-      const exportViewport = getViewportForBounds(bounds, width, height, 0.05, 2, 0.08);
-      const backgroundColor = theme === 'dark' ? '#171615' : '#ffffff';
+      const figureNode = activeScientificFigure
+        ? nodes.find((node) => node.data.scientificRole === 'figure-background')
+        : undefined;
+      const scientificBounds = figureNode && activeScientificFigure ? {
+        x: figureNode.position.x,
+        y: figureNode.position.y,
+        width: Number.parseFloat(String(figureNode.style?.width ?? figureNode.measured?.width ?? 1)),
+        height: Number.parseFloat(String(figureNode.style?.height ?? figureNode.measured?.height ?? 1)),
+      } : undefined;
+      const contentNodes = nodes.filter((node) => !node.data.exportExcluded);
+      const bounds = scientificBounds ?? getNodesBounds(contentNodes);
+      const naturalWidth = scientificBounds ? Math.ceil(bounds.width) : Math.max(480, Math.ceil(bounds.width + 128));
+      const naturalHeight = scientificBounds ? Math.ceil(bounds.height) : Math.max(320, Math.ceil(bounds.height + 128));
+      const scale = scientificBounds ? 1 : Math.min(1, 4096 / Math.max(naturalWidth, naturalHeight));
+      const width = Math.max(1, Math.round(naturalWidth * scale));
+      const height = Math.max(1, Math.round(naturalHeight * scale));
+      const exportViewport = scientificBounds
+        ? { x: -bounds.x, y: -bounds.y, zoom: 1 }
+        : getViewportForBounds(bounds, width, height, 0.05, 2, 0.08);
+      const backgroundColor = scientificBounds
+        ? activeScientificFigure?.background === 'transparent' && format !== 'pdf' ? undefined : '#ffffff'
+        : theme === 'dark' ? '#171615' : '#ffffff';
+      const excludedNodeIds = new Set(nodes.filter((node) => node.data.exportExcluded).map((node) => node.id));
+      const filter = (domNode: HTMLElement) => {
+        if (domNode.classList?.contains('react-flow__handle')
+          || domNode.classList?.contains('react-flow__resize-control')
+          || domNode.classList?.contains('flow-node__lock')) return false;
+        if (domNode.classList?.contains('react-flow__node')) {
+          const id = domNode.getAttribute('data-id');
+          if (id && excludedNodeIds.has(id)) return false;
+        }
+        return true;
+      };
+      const targetWidth = activeScientificFigure && scientificBounds
+        ? Math.round(activeScientificFigure.widthMm / 25.4 * activeScientificFigure.dpi)
+        : undefined;
+      const targetHeight = activeScientificFigure && scientificBounds
+        ? Math.round(activeScientificFigure.heightMm / 25.4 * activeScientificFigure.dpi)
+        : undefined;
       const options = {
         backgroundColor,
         width,
         height,
-        pixelRatio: format === 'png' || format === 'pdf' ? 2 : 1,
+        canvasWidth: format !== 'svg' ? targetWidth : undefined,
+        canvasHeight: format !== 'svg' ? targetHeight : undefined,
+        pixelRatio: scientificBounds ? 1 : format === 'png' || format === 'pdf' ? 2 : 1,
+        filter,
         style: {
           width: `${width}px`,
           height: `${height}px`,
@@ -443,33 +539,55 @@ function EditorApp() {
         },
       };
       if (format === 'svg') {
-        const dataUrl = await toSvg(viewportElement, options);
-        const anchor = document.createElement('a');
-        anchor.href = dataUrl;
-        anchor.download = fileName('svg');
-        anchor.click();
+        if (activeScientificFigure && scientificBounds) {
+          const { serializePublicationSvg } = await import('./lib/scientificExport');
+          downloadContent(
+            serializePublicationSvg(title, renderedNodes, renderedEdges, activeScientificFigure),
+            fileName('svg'),
+            'image/svg+xml;charset=utf-8',
+          );
+        } else {
+          const dataUrl = await toSvg(viewportElement, options);
+          const anchor = document.createElement('a');
+          anchor.href = dataUrl;
+          anchor.download = fileName('svg');
+          anchor.click();
+        }
       } else {
         const dataUrl = await toPng(viewportElement, options);
         if (format === 'png') {
+          const publicationDataUrl = activeScientificFigure && scientificBounds
+            ? (await import('./lib/pngMetadata')).withPngDpiMetadata(dataUrl, activeScientificFigure.dpi)
+            : dataUrl;
           const anchor = document.createElement('a');
-          anchor.href = dataUrl;
+          anchor.href = publicationDataUrl;
           anchor.download = fileName('png');
           anchor.click();
         } else {
           const { jsPDF } = await import('jspdf');
-          const orientation = width >= height ? 'landscape' : 'portrait';
-          const pdf = new jsPDF({ orientation, unit: 'px', format: [width, height], hotfixes: ['px_scaling'] });
-          pdf.addImage(dataUrl, 'PNG', 0, 0, width, height, undefined, 'FAST');
+          const pdfWidth = activeScientificFigure && scientificBounds ? activeScientificFigure.widthMm : width;
+          const pdfHeight = activeScientificFigure && scientificBounds ? activeScientificFigure.heightMm : height;
+          const unit = activeScientificFigure && scientificBounds ? 'mm' : 'px';
+          const orientation = pdfWidth >= pdfHeight ? 'landscape' : 'portrait';
+          const pdf = new jsPDF({ orientation, unit, format: [pdfWidth, pdfHeight], hotfixes: unit === 'px' ? ['px_scaling'] : [] });
+          pdf.addImage(dataUrl, 'PNG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
           pdf.save(fileName('pdf'));
         }
       }
-      addToast({ tone: 'success', title: `已导出 ${format.toUpperCase()}` });
+      addToast({
+        tone: 'success',
+        title: `已导出 ${format.toUpperCase()}`,
+        detail: activeScientificFigure && scientificBounds
+          ? `${activeScientificFigure.widthMm} × ${activeScientificFigure.heightMm} mm${format === 'svg' ? '，已写入物理尺寸' : ` · ${targetWidth} × ${targetHeight} px`}`
+          : undefined,
+      });
     } catch (error) {
       addToast({ tone: 'error', title: '导出失败', detail: error instanceof Error ? error.message : '浏览器无法生成文件。' });
     } finally {
       setExporting(false);
+      canvasRef.current?.classList.remove('is-exporting');
     }
-  }, [addToast, fileName, nodes, theme]);
+  }, [activeScientificFigure, addToast, fileName, nodes, renderedEdges, renderedNodes, theme, title]);
 
   const copySelection = useCallback(async () => {
     const selectedNodes = nodes.filter((node) => node.selected);
@@ -510,6 +628,7 @@ function EditorApp() {
     { id: 'import', label: '导入文件', group: '文件', shortcut: 'Ctrl O', keywords: 'open drawio mermaid visio', run: () => setImportOpen(true) },
     { id: 'export', label: '导出 Flowloom JSON', group: '文件', shortcut: 'Ctrl S', keywords: 'save json', run: () => exportText('json') },
     { id: 'ai', label: '使用 AI 生成流程图', group: '创建', shortcut: 'Ctrl J', keywords: 'ccswitch model prompt', run: () => setAiOpen(true) },
+    { id: 'scientific', label: '打开科研绘图工作台', group: '创建', keywords: 'science paper figure chart csv journal panel', run: () => setScientificOpen(true) },
     { id: 'code', label: '使用代码绘制流程图', group: '创建', keywords: 'mermaid graphviz dot plantuml code', run: () => setCodeOpen(true) },
     { id: 'process', label: '添加处理步骤', group: '创建', keywords: 'node rectangle', run: () => addShape('process') },
     { id: 'decision', label: '添加判断节点', group: '创建', keywords: 'diamond condition', run: () => addShape('decision') },
@@ -600,6 +719,7 @@ function EditorApp() {
         </div>
 
         <div className="topbar__right">
+          <button className="topbar-command topbar-command--compact scientific-button" aria-label="打开科研绘图工作台" onClick={() => setScientificOpen(true)}><ChartSpline size={16} /><span>科研</span></button>
           <button className="topbar-command topbar-command--compact" aria-label="使用代码绘制流程图" onClick={() => setCodeOpen(true)}><Code2 size={16} /><span>代码</span></button>
           <button className="topbar-command topbar-command--compact" aria-label="导入文件" onClick={() => setImportOpen(true)}><FileUp size={16} /><span>导入</span></button>
           <button ref={exportButtonRef} className="topbar-command topbar-command--compact" aria-label="导出流程图" aria-haspopup="menu" aria-expanded={exportOpen} onClick={() => setExportOpen((value) => !value)}><Download size={16} /><span>导出</span><ChevronDown size={13} /></button>
@@ -672,6 +792,7 @@ function EditorApp() {
             <h1>空白画布</h1>
             <div>
               <button className="primary-button" onClick={() => setAiOpen(true)}><Bot size={16} /> AI 生成</button>
+              <button className="secondary-button" onClick={() => setScientificOpen(true)}><ChartSpline size={16} /> 科研图版</button>
               <button className="secondary-button" onClick={() => setCodeOpen(true)}><Code2 size={16} /> 代码绘图</button>
               <button className="secondary-button" onClick={() => setImportOpen(true)}><FileUp size={16} /> 导入文件</button>
               <button className="secondary-button" onClick={() => addShape('process')}><FilePlus2 size={16} /> 添加节点</button>
@@ -691,6 +812,7 @@ function EditorApp() {
         <span>{edges.length} 连线</span>
         <span>{pages.length} 页面</span>
         <span>{layers.length} 图层</span>
+        {activeScientificFigure && <span>{activeScientificFigure.widthMm} × {activeScientificFigure.heightMm} mm</span>}
         <span className="statusbar__spacer" />
         <span>本地优先</span>
       </footer>
@@ -700,6 +822,14 @@ function EditorApp() {
         <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} onImport={applyImport} />
         <AiDialog open={aiOpen} referenceNode={referenceNode} onClose={() => setAiOpen(false)} onApply={applyAi} />
         <CodeDialog open={codeOpen} documentTitle={title} onClose={() => setCodeOpen(false)} onApply={applyImport} />
+        <ScientificDialog
+          open={scientificOpen}
+          nodes={nodes}
+          figure={activeScientificFigure}
+          onClose={() => setScientificOpen(false)}
+          onConfigureFigure={applyScientificFigure}
+          onInsertChart={applyScientificChart}
+        />
       </Suspense>
       <CommandPalette open={commandOpen} commands={commands} onClose={() => setCommandOpen(false)} />
       <ToastRegion toasts={toasts} onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />

@@ -1,7 +1,7 @@
 {
   "name": "flowloom",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -23,6 +23,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "svg-path-bbox": "^2.1.0",
+    "vega": "^6.3.1",
+    "vega-lite": "^6.4.3",
     "yaml": "^2.7.0",
     "zustand": "^5.0.3"
   },

@@ -111,6 +111,62 @@ export type TextAlign = 'left' | 'center' | 'right';
 export type VerticalAlign = 'top' | 'middle' | 'bottom';
 export type FidelityLevel = 'structural' | 'hybrid' | 'visual';
 export type SvgPrimitiveTag = 'rect' | 'ellipse' | 'circle' | 'line' | 'polyline' | 'polygon' | 'path' | 'text';
+export type ScientificChartType = 'scatter' | 'line' | 'bar' | 'boxplot' | 'heatmap' | 'errorbar';
+export type ScientificRole = 'figure-background' | 'panel-guide' | 'panel-label' | 'chart-root';
+
+export interface ScientificFigureSpec {
+  widthMm: number;
+  heightMm: number;
+  dpi: number;
+  rows: number;
+  columns: number;
+  marginMm: number;
+  gapMm: number;
+  panelLabels: boolean;
+  labelStyle: 'uppercase' | 'lowercase' | 'numeric';
+  background: '#ffffff' | 'transparent';
+  updatedAt: string;
+}
+
+export interface ScientificFieldMap {
+  x: string;
+  y: string;
+  color?: string;
+  error?: string;
+}
+
+export interface ScientificProvenance {
+  id: string;
+  kind: 'data-chart' | 'imported-asset';
+  sourceName: string;
+  sourceFormat: string;
+  sourceData?: string;
+  chartType?: ScientificChartType;
+  chartSpec?: Record<string, unknown>;
+  fields?: ScientificFieldMap;
+  units?: Record<string, string>;
+  uncertainty?: {
+    field?: string;
+    definition?: string;
+  };
+  engine?: string;
+  generatedAt: string;
+  license?: {
+    name: string;
+    url?: string;
+    author?: string;
+    modified?: boolean;
+  };
+}
+
+export interface ScientificAuditIssue {
+  id: string;
+  severity: 'error' | 'warning' | 'info';
+  category: 'layout' | 'typography' | 'stroke' | 'color' | 'data' | 'raster';
+  title: string;
+  detail: string;
+  nodeIds?: string[];
+}
 
 export interface SvgVectorElement {
   tag: SvgPrimitiveTag;
@@ -140,6 +196,10 @@ export interface FlowNodeData extends Record<string, unknown> {
   vector?: SvgVectorElement;
   imageUrl?: string;
   sourceRef?: string;
+  provenance?: ScientificProvenance;
+  provenanceRef?: string;
+  scientificRole?: ScientificRole;
+  exportExcluded?: boolean;
   locked?: boolean;
 }
 
@@ -169,6 +229,7 @@ export interface DiagramPage {
   nodes: FlowNode[];
   edges: FlowEdge[];
   layers: DiagramLayer[];
+  scientific?: ScientificFigureSpec;
 }
 
 export interface DiagramDocument {
