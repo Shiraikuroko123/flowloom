@@ -1,0 +1,11 @@
+node_modules
+dist
+.vite
+*.local
+*.log
+.DS_Store
+Thumbs.db
+output
+.playwright-cli
+.vite-stdout.log
+.vite-stderr.log
