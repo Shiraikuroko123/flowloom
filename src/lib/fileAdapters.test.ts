@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   aiPayloadToGraph,
   importDiagramFile,
+  importDiagramSource,
   serializeDocument,
   serializeDrawio,
   serializeMermaid,
@@ -30,6 +31,48 @@ describe('diagram file adapters', () => {
     expect(result.edges).toHaveLength(4);
     expect(result.edges.some((edge) => edge.data?.label === '是')).toBe(true);
     expect(result.nodes.some((node) => node.position.x !== 0)).toBe(true);
+  });
+
+  it('converts Graphviz DOT source directly into editable nodes', () => {
+    const result = importDiagramSource(`digraph flow {
+      rankdir=LR;
+      start [label="开始", shape=oval];
+      check [label="通过？", shape=diamond];
+      done [label="完成"];
+      start -> check;
+      check -> done [label="是"];
+    }`, 'dot', '代码流程');
+
+    expect(result.title).toBe('代码流程');
+    expect(result.sourceFormat).toBe('Graphviz DOT');
+    expect(result.nodes).toHaveLength(3);
+    expect(result.nodes.find((node) => node.id === 'check')?.data.kind).toBe('decision');
+    expect(result.edges.find((edge) => edge.data?.label === '是')).toBeDefined();
+    expect(result.nodes.some((node) => node.position.x > 0)).toBe(true);
+  });
+
+  it('preserves both PlantUML decision branches when generating editable structure', () => {
+    const result = importDiagramSource(`@startuml
+      start
+      :提交申请;
+      if (资料完整？) then (是)
+        :发布;
+      else (否)
+        :补充资料;
+      endif
+      stop
+      @enduml`, 'plantuml');
+
+    expect(result.nodes).toHaveLength(6);
+    expect(result.edges).toHaveLength(6);
+    const decision = result.nodes.find((node) => node.data.kind === 'decision');
+    expect(result.edges.filter((edge) => edge.source === decision?.id).map((edge) => edge.data?.label)).toEqual(['是', '否']);
+    const end = result.nodes.find((node) => node.data.label === '结束');
+    expect(result.edges.filter((edge) => edge.target === end?.id)).toHaveLength(2);
+  });
+
+  it('rejects empty code without changing an existing canvas', () => {
+    expect(() => importDiagramSource('   ', 'mermaid')).toThrow('请输入流程图代码');
   });
 
   it('imports uncompressed draw.io XML with geometry and style', async () => {

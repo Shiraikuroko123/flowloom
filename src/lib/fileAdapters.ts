@@ -303,6 +303,8 @@ interface ParsedTextGraph {
   warnings: string[];
 }
 
+export type CodeDiagramFormat = 'mermaid' | 'dot' | 'plantuml';
+
 function addTextNode(map: Map<string, FlowNode>, id: string, label = id, kind: ShapeKind = 'process') {
   if (map.has(id)) {
     const current = map.get(id)!;
@@ -363,7 +365,9 @@ function parseMermaid(source: string): ParsedTextGraph {
     if (nodeMatch) {
       const parsed = mermaidNode(nodeMatch[1], nodeMatch[2], nodeMatch[3]);
       addTextNode(map, parsed.id, parsed.label, parsed.kind);
+      continue;
     }
+    warnings.push(`未识别 Mermaid 语句：${line}`);
   }
 
   return { nodes: [...map.values()], edges, direction, warnings };
@@ -472,45 +476,64 @@ function parsePlantUml(source: string): ParsedTextGraph {
   const nodes: FlowNode[] = [];
   const edges: FlowEdge[] = [];
   const warnings: string[] = [];
-  let previous: FlowNode | null = null;
-  const decisionStack: FlowNode[] = [];
+  type PendingConnection = { node: FlowNode; label?: string };
+  interface DecisionFrame {
+    decision: FlowNode;
+    branchEnds: PendingConnection[];
+  }
+  let previous: PendingConnection[] = [];
+  const decisionStack: DecisionFrame[] = [];
+
+  const appendNode = (kind: ShapeKind, label: string) => {
+    const current = createFlowNode(kind, { x: 0, y: 0 }, label, { id: `plantuml-${nodes.length + 1}` });
+    nodes.push(current);
+    for (const connection of previous) {
+      edges.push(createFlowEdge(connection.node.id, current.id, connection.label));
+    }
+    previous = [{ node: current }];
+    return current;
+  };
 
   for (const rawLine of source.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || /^@(?:start|end)uml/i.test(line) || /^skinparam/i.test(line)) continue;
-    let kind: ShapeKind | null = null;
-    let label = '';
     if (/^start$/i.test(line)) {
-      kind = 'start';
-      label = '开始';
+      appendNode('start', '开始');
     } else if (/^(stop|end)$/i.test(line)) {
-      kind = 'start';
-      label = '结束';
+      appendNode('start', '结束');
     } else if (/^:[\s\S]*;$/i.test(line)) {
-      kind = 'process';
-      label = line.slice(1, -1).trim();
+      appendNode('process', line.slice(1, -1).trim());
     } else if (/^if\s*\((.+)\)/i.test(line)) {
-      kind = 'decision';
-      label = line.match(/^if\s*\((.+)\)/i)?.[1] ?? '判断';
-    } else if (/^(else|elseif)/i.test(line)) {
-      previous = decisionStack.at(-1) ?? previous;
-      continue;
+      const match = line.match(/^if\s*\((.+)\)\s*then(?:\s*\((.+)\))?/i);
+      const current = appendNode('decision', match?.[1] ?? '判断');
+      decisionStack.push({ decision: current, branchEnds: [] });
+      previous = [{ node: current, label: match?.[2]?.trim() || undefined }];
+    } else if (/^else\b/i.test(line)) {
+      const frame = decisionStack.at(-1);
+      if (!frame) {
+        warnings.push(`未匹配的 PlantUML else：${line}`);
+        continue;
+      }
+      frame.branchEnds.push(...previous);
+      const label = line.match(/^else(?:\s*\((.+)\))?/i)?.[1]?.trim();
+      previous = [{ node: frame.decision, label: label || undefined }];
+    } else if (/^elseif\b/i.test(line)) {
+      warnings.push(`暂不支持 PlantUML elseif，请改用嵌套 if：${line}`);
     } else if (/^endif/i.test(line)) {
-      decisionStack.pop();
-      continue;
+      const frame = decisionStack.pop();
+      if (!frame) {
+        warnings.push(`未匹配的 PlantUML endif：${line}`);
+        continue;
+      }
+      frame.branchEnds.push(...previous);
+      previous = frame.branchEnds;
     } else if (/^note\s+/i.test(line)) {
-      kind = 'note';
-      label = line.replace(/^note\s+(?:left|right|top|bottom)?\s*/i, '') || '注释';
+      appendNode('note', line.replace(/^note\s+(?:left|right|top|bottom)?\s*/i, '') || '注释');
     } else {
       warnings.push(`未识别 PlantUML 语句：${line}`);
     }
-    if (!kind) continue;
-    const current = createFlowNode(kind, { x: 0, y: 0 }, label);
-    nodes.push(current);
-    if (previous) edges.push(createFlowEdge(previous.id, current.id));
-    previous = current;
-    if (kind === 'decision') decisionStack.push(current);
   }
+  if (decisionStack.length > 0) warnings.push('PlantUML 中存在未闭合的 if 块。');
   return { nodes, edges, direction: 'TB', warnings };
 }
 
@@ -660,6 +683,17 @@ function importTextGraph(parsed: ParsedTextGraph, title: string, sourceFormat: s
     sourceFormat,
     warnings: parsed.warnings,
   };
+}
+
+export function importDiagramSource(
+  source: string,
+  format: CodeDiagramFormat,
+  title = '代码流程图',
+): ImportResult {
+  if (!source.trim()) throw new Error('请输入流程图代码。');
+  if (format === 'mermaid') return importTextGraph(parseMermaid(source), title, 'Mermaid');
+  if (format === 'dot') return importTextGraph(parseDot(source), title, 'Graphviz DOT');
+  return importTextGraph(parsePlantUml(source), title, 'PlantUML');
 }
 
 async function importVsdx(file: File): Promise<ImportResult> {
@@ -819,9 +853,9 @@ export async function importDiagramFile(file: File): Promise<ImportResult> {
 
   if (extension === 'drawio') return importDrawio(source, title);
   if (extension === 'bpmn') return importTextGraph(parseBpmn(source), title, 'BPMN 2.0');
-  if (extension === 'mmd' || extension === 'mermaid') return importTextGraph(parseMermaid(source), title, 'Mermaid');
-  if (extension === 'dot' || extension === 'gv') return importTextGraph(parseDot(source), title, 'Graphviz DOT');
-  if (extension === 'puml' || extension === 'plantuml') return importTextGraph(parsePlantUml(source), title, 'PlantUML');
+  if (extension === 'mmd' || extension === 'mermaid') return importDiagramSource(source, 'mermaid', title);
+  if (extension === 'dot' || extension === 'gv') return importDiagramSource(source, 'dot', title);
+  if (extension === 'puml' || extension === 'plantuml') return importDiagramSource(source, 'plantuml', title);
   if (extension === 'csv') return importTextGraph(parseCsv(source), title, 'CSV edge list');
   if (extension === 'svg') {
     const blob = new File([source], file.name, { type: 'image/svg+xml' });

@@ -29,6 +29,12 @@ typography:
     fontWeight: 600
     lineHeight: 1.25
     letterSpacing: "0"
+  code:
+    fontFamily: "Cascadia Code, SFMono-Regular, Consolas, Liberation Mono, monospace"
+    fontSize: "0.8125rem"
+    fontWeight: 400
+    lineHeight: 1.6
+    letterSpacing: "0"
 rounded:
   sm: "4px"
   md: "6px"

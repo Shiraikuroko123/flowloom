@@ -26,6 +26,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  Code2,
   Command,
   Download,
   FileDown,
@@ -82,6 +83,7 @@ const MOBILE_VIEWPORT_QUERY = '(max-width: 900px)';
 const nodeTypes = { flowNode: FlowNodeComponent };
 const AiDialog = lazy(() => import('./components/AiDialog').then((module) => ({ default: module.AiDialog })));
 const ImportDialog = lazy(() => import('./components/ImportDialog').then((module) => ({ default: module.ImportDialog })));
+const CodeDialog = lazy(() => import('./components/CodeDialog').then((module) => ({ default: module.CodeDialog })));
 
 interface ClipboardGraph {
   nodes: FlowNode[];
@@ -235,6 +237,7 @@ function EditorApp() {
   const [zoom, setZoom] = useState(1);
   const [importOpen, setImportOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [codeOpen, setCodeOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -507,6 +510,7 @@ function EditorApp() {
     { id: 'import', label: '导入文件', group: '文件', shortcut: 'Ctrl O', keywords: 'open drawio mermaid visio', run: () => setImportOpen(true) },
     { id: 'export', label: '导出 Flowloom JSON', group: '文件', shortcut: 'Ctrl S', keywords: 'save json', run: () => exportText('json') },
     { id: 'ai', label: '使用 AI 生成流程图', group: '创建', shortcut: 'Ctrl J', keywords: 'ccswitch model prompt', run: () => setAiOpen(true) },
+    { id: 'code', label: '使用代码绘制流程图', group: '创建', keywords: 'mermaid graphviz dot plantuml code', run: () => setCodeOpen(true) },
     { id: 'process', label: '添加处理步骤', group: '创建', keywords: 'node rectangle', run: () => addShape('process') },
     { id: 'decision', label: '添加判断节点', group: '创建', keywords: 'diamond condition', run: () => addShape('decision') },
     { id: 'undo', label: '撤销', group: '编辑', shortcut: 'Ctrl Z', run: undo },
@@ -596,6 +600,7 @@ function EditorApp() {
         </div>
 
         <div className="topbar__right">
+          <button className="topbar-command topbar-command--compact" aria-label="使用代码绘制流程图" onClick={() => setCodeOpen(true)}><Code2 size={16} /><span>代码</span></button>
           <button className="topbar-command topbar-command--compact" aria-label="导入文件" onClick={() => setImportOpen(true)}><FileUp size={16} /><span>导入</span></button>
           <button ref={exportButtonRef} className="topbar-command topbar-command--compact" aria-label="导出流程图" aria-haspopup="menu" aria-expanded={exportOpen} onClick={() => setExportOpen((value) => !value)}><Download size={16} /><span>导出</span><ChevronDown size={13} /></button>
           <button className="primary-button ai-button" aria-label="AI 生成流程图" onClick={() => setAiOpen(true)}><Sparkles size={16} /><span>AI 生成</span></button>
@@ -642,7 +647,7 @@ function EditorApp() {
           selectionKeyCode="Shift"
           multiSelectionKeyCode="Shift"
           deleteKeyCode={null}
-          elevateNodesOnSelect
+          elevateNodesOnSelect={false}
           defaultEdgeOptions={{ type: 'smoothstep' }}
           connectionLineStyle={{ stroke: 'oklch(0.560 0.155 72)', strokeWidth: 2 }}
           proOptions={{ hideAttribution: false }}
@@ -667,6 +672,7 @@ function EditorApp() {
             <h1>空白画布</h1>
             <div>
               <button className="primary-button" onClick={() => setAiOpen(true)}><Bot size={16} /> AI 生成</button>
+              <button className="secondary-button" onClick={() => setCodeOpen(true)}><Code2 size={16} /> 代码绘图</button>
               <button className="secondary-button" onClick={() => setImportOpen(true)}><FileUp size={16} /> 导入文件</button>
               <button className="secondary-button" onClick={() => addShape('process')}><FilePlus2 size={16} /> 添加节点</button>
             </div>
@@ -693,6 +699,7 @@ function EditorApp() {
       <Suspense fallback={null}>
         <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} onImport={applyImport} />
         <AiDialog open={aiOpen} referenceNode={referenceNode} onClose={() => setAiOpen(false)} onApply={applyAi} />
+        <CodeDialog open={codeOpen} documentTitle={title} onClose={() => setCodeOpen(false)} onApply={applyImport} />
       </Suspense>
       <CommandPalette open={commandOpen} commands={commands} onClose={() => setCommandOpen(false)} />
       <ToastRegion toasts={toasts} onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />
