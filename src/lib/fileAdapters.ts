@@ -3,12 +3,14 @@ import pako from 'pako';
 import { parse as parseYaml } from 'yaml';
 import type {
   ArrowHead,
+  DiagramPage,
   FlowEdge,
   FlowNode,
   ImportResult,
   ShapeKind,
 } from '../types';
 import {
+  createDefaultLayer,
   createFlowEdge,
   createFlowNode,
   layoutGraph,
@@ -18,6 +20,7 @@ import {
 } from './diagram';
 import { createId } from './id';
 import { getShapeDefinition, isShapeKind } from './shapeRegistry';
+import { parseEditableSvg } from './svgImport';
 
 const STRUCTURED_EXTENSIONS = new Set([
   'json',
@@ -88,6 +91,16 @@ function decodeStyleValue(value: string | undefined): string | undefined {
   }
 }
 
+function decodeStyleJson<T>(value: string | undefined): T | undefined {
+  const decoded = decodeStyleValue(value);
+  if (!decoded) return undefined;
+  try {
+    return JSON.parse(decoded) as T;
+  } catch {
+    return undefined;
+  }
+}
+
 function mapMxShape(style: Record<string, string>): ShapeKind {
   if (isShapeKind(style.flowloomKind)) return style.flowloomKind;
   const shape = `${style.shape ?? ''} ${Object.keys(style).join(' ')}`.toLowerCase();
@@ -136,21 +149,22 @@ function decodeDrawioPayload(payload: string): string {
   }
 }
 
-function importDrawio(source: string, title: string): ImportResult {
-  const outer = new DOMParser().parseFromString(source, 'application/xml');
-  if (outer.querySelector('parsererror')) throw new Error('draw.io XML 无法解析。');
-
-  let graphDocument = outer;
-  if (!outer.querySelector('mxGraphModel')) {
-    const diagram = outer.querySelector('diagram');
-    if (!diagram?.textContent?.trim()) throw new Error('文件中没有可读取的 draw.io 图页。');
-    graphDocument = new DOMParser().parseFromString(decodeDrawioPayload(diagram.textContent), 'application/xml');
-  }
-
+function parseDrawioModel(graphDocument: ParentNode): { nodes: FlowNode[]; edges: FlowEdge[]; layers: DiagramPage['layers']; warnings: string[] } {
   const nodes: FlowNode[] = [];
   const edges: FlowEdge[] = [];
   const warnings: string[] = [];
   const cells = Array.from(graphDocument.querySelectorAll('mxCell'));
+  const vertexIds = new Set(cells.filter((cell) => cell.getAttribute('vertex') === '1').map((cell) => cell.getAttribute('id')).filter(Boolean) as string[]);
+  const layerCells = cells.filter((cell) => cell.getAttribute('parent') === '0' && cell.getAttribute('id') !== '0');
+  const layers = layerCells.length
+    ? layerCells.map((cell, index) => ({
+      id: cell.getAttribute('id') ?? `layer-${index + 1}`,
+      name: textContent(cell.getAttribute('value') ?? '') || (index === 0 ? '默认图层' : `图层 ${index + 1}`),
+      visible: cell.getAttribute('visible') !== '0',
+      locked: cell.getAttribute('locked') === '1',
+    }))
+    : [createDefaultLayer()];
+  const layerIds = new Set(layers.map((layer) => layer.id));
 
   for (const cell of cells) {
     const id = cell.getAttribute('id') ?? createId('node');
@@ -187,7 +201,18 @@ function importDrawio(source: string, title: string): ImportResult {
         opacity: style.opacity ? Math.max(0.1, Math.min(1, Number(style.opacity) / 100)) : node.data.opacity,
         description: decodeStyleValue(style.flowloomDescription),
         locked: style.flowloomLocked === '1',
+        rotation: Number(style.flowloomRotation) || 0,
+        vector: decodeStyleJson(style.flowloomVector) ?? node.data.vector,
+        layerId: layerIds.has(cell.getAttribute('parent') ?? '') ? cell.getAttribute('parent')! : layers[0].id,
+        hidden: cell.getAttribute('visible') === '0',
       };
+      const parent = cell.getAttribute('parent');
+      if (parent && vertexIds.has(parent)) {
+        node.parentId = parent;
+        node.extent = 'parent';
+        node.expandParent = true;
+      }
+      node.hidden = Boolean(node.data.hidden);
       node.draggable = !node.data.locked;
       nodes.push(node);
     }
@@ -220,9 +245,51 @@ function importDrawio(source: string, title: string): ImportResult {
 
   const graph = normalizeGraph(nodes, edges);
   if (graph.nodes.length === 0) throw new Error('draw.io 文件中没有找到可编辑图元。');
+  return { ...graph, layers, warnings };
+}
+
+function importDrawio(source: string, title: string): ImportResult {
+  const outer = new DOMParser().parseFromString(source, 'application/xml');
+  if (outer.querySelector('parsererror')) throw new Error('draw.io XML 无法解析。');
+  const diagrams = Array.from(outer.querySelectorAll('diagram'));
+  const pages: DiagramPage[] = [];
+  const warnings: string[] = [];
+
+  if (diagrams.length === 0 && outer.querySelector('mxGraphModel')) {
+    const graph = parseDrawioModel(outer);
+    pages.push({ id: 'drawio-page-1', name: '页面 1', nodes: graph.nodes, edges: graph.edges, layers: graph.layers });
+    warnings.push(...graph.warnings);
+  } else {
+    for (const [index, diagram] of diagrams.entries()) {
+      let model: ParentNode | null = diagram.querySelector('mxGraphModel');
+      if (!model && diagram.textContent?.trim()) {
+        const decoded = new DOMParser().parseFromString(decodeDrawioPayload(diagram.textContent), 'application/xml');
+        if (!decoded.querySelector('parsererror')) model = decoded;
+      }
+      if (!model) {
+        warnings.push(`跳过了无法解析的 draw.io 页面 ${index + 1}。`);
+        continue;
+      }
+      const graph = parseDrawioModel(model);
+      pages.push({
+        id: diagram.getAttribute('id') || `drawio-page-${index + 1}`,
+        name: diagram.getAttribute('name') || `页面 ${index + 1}`,
+        nodes: graph.nodes,
+        edges: graph.edges,
+        layers: graph.layers,
+      });
+      warnings.push(...graph.warnings.map((warning) => `${diagram.getAttribute('name') || `页面 ${index + 1}`}：${warning}`));
+    }
+  }
+
+  if (pages.length === 0) throw new Error('文件中没有可读取的 draw.io 图页。');
+  const active = pages[0];
   return {
     title,
-    ...graph,
+    nodes: active.nodes,
+    edges: active.edges,
+    pages,
+    activePageId: active.id,
     fidelity: warnings.length ? 'hybrid' : 'structural',
     sourceFormat: 'draw.io',
     warnings,
@@ -541,6 +608,34 @@ function parseNative(value: Record<string, unknown>, title: string): ImportResul
     const graph = normalizeGraph(parsed.nodes, parsed.edges);
     return { title, ...graph, fidelity: parsed.warnings.length ? 'hybrid' : 'structural', sourceFormat: 'Excalidraw', warnings: parsed.warnings };
   }
+  if (Array.isArray(value.pages)) {
+    const pages = (value.pages as Array<Record<string, unknown>>).map((page, index): DiagramPage => {
+      const nodes = Array.isArray(page.nodes) ? page.nodes as FlowNode[] : [];
+      const edges = Array.isArray(page.edges) ? page.edges as FlowEdge[] : [];
+      const graph = normalizeGraph(nodes, edges);
+      return {
+        id: typeof page.id === 'string' ? page.id : `page-${index + 1}`,
+        name: typeof page.name === 'string' ? page.name : `页面 ${index + 1}`,
+        ...graph,
+        layers: Array.isArray(page.layers) && page.layers.length
+          ? page.layers as DiagramPage['layers']
+          : [createDefaultLayer()],
+      };
+    });
+    if (pages.length === 0) throw new Error('Flowloom JSON 中没有可识别的页面。');
+    const requestedPageId = typeof value.activePageId === 'string' ? value.activePageId : pages[0].id;
+    const active = pages.find((page) => page.id === requestedPageId) ?? pages[0];
+    return {
+      title: typeof value.title === 'string' ? value.title : title,
+      nodes: active.nodes,
+      edges: active.edges,
+      pages,
+      activePageId: active.id,
+      fidelity: 'structural',
+      sourceFormat: 'Flowloom JSON v2',
+      warnings: [],
+    };
+  }
   const nodes = Array.isArray(value.nodes) ? (value.nodes as FlowNode[]) : [];
   const edges = Array.isArray(value.edges) ? (value.edges as FlowEdge[]) : [];
   if (nodes.length === 0) throw new Error('JSON 中没有可识别的 nodes 数组。');
@@ -730,7 +825,48 @@ export async function importDiagramFile(file: File): Promise<ImportResult> {
   if (extension === 'csv') return importTextGraph(parseCsv(source), title, 'CSV edge list');
   if (extension === 'svg') {
     const blob = new File([source], file.name, { type: 'image/svg+xml' });
-    return visualReference(blob);
+    const parsed = parseEditableSvg(source, file.name);
+    if (parsed.nodes.length === 0) return visualReference(blob);
+    const editableLayerId = createId('svg-editable-layer');
+    const nodes: FlowNode[] = parsed.nodes.map((node) => ({
+      ...node,
+      data: { ...node.data, layerId: editableLayerId },
+    }));
+    let layers: DiagramPage['layers'] = [{ id: editableLayerId, name: '可编辑图元', visible: true, locked: false }];
+    if (parsed.unsupportedCount > 0) {
+      const referenceLayerId = createId('svg-reference-layer');
+      const reference = createFlowNode('image', { x: parsed.sourceBounds.x, y: parsed.sourceBounds.y }, `${file.name} 原图参考`, {
+        id: createId('svg-reference'),
+        style: { width: parsed.sourceBounds.width, height: parsed.sourceBounds.height },
+      });
+      reference.zIndex = -1000;
+      reference.hidden = true;
+      reference.draggable = false;
+      reference.data = {
+        ...reference.data,
+        imageUrl: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`,
+        sourceRef: file.name,
+        layerId: referenceLayerId,
+        hidden: false,
+        locked: true,
+      };
+      nodes.unshift(reference);
+      layers = [
+        { id: referenceLayerId, name: '原图参考', visible: false, locked: true },
+        ...layers,
+      ];
+    }
+    const pageId = createId('svg-page');
+    return {
+      title,
+      nodes,
+      edges: [],
+      pages: [{ id: pageId, name: title, nodes, edges: [], layers }],
+      activePageId: pageId,
+      fidelity: parsed.unsupportedCount > 0 ? 'hybrid' : 'structural',
+      sourceFormat: 'SVG',
+      warnings: parsed.warnings,
+    };
   }
   if (extension === 'yaml' || extension === 'yml') {
     const parsed = parseYaml(source) as Record<string, unknown>;
@@ -759,26 +895,45 @@ function xmlEscape(value: unknown): string {
 function mxStyle(node: FlowNode): string {
   const shape = getShapeDefinition(node.data.kind).drawioStyle;
   const description = node.data.description ? encodeURIComponent(node.data.description) : '';
-  return `${shape};flowloomKind=${node.data.kind};flowloomFontWeight=${node.data.fontWeight};flowloomRadius=${node.data.radius};flowloomTextAlign=${node.data.textAlign};flowloomVerticalAlign=${node.data.verticalAlign};flowloomDescription=${description};flowloomLocked=${node.data.locked ? 1 : 0};whiteSpace=wrap;html=1;fillColor=${node.data.fill};strokeColor=${node.data.stroke};fontColor=${node.data.textColor};strokeWidth=${node.data.borderWidth};fontSize=${node.data.fontSize};fontStyle=${node.data.fontWeight >= 700 ? 1 : 0};align=${node.data.textAlign};verticalAlign=${node.data.verticalAlign};opacity=${Math.round(node.data.opacity * 100)};`;
+  const vector = node.data.vector ? encodeURIComponent(JSON.stringify(node.data.vector)) : '';
+  return `${shape};flowloomKind=${node.data.kind};flowloomFontWeight=${node.data.fontWeight};flowloomRadius=${node.data.radius};flowloomRotation=${node.data.rotation ?? 0};flowloomVector=${vector};flowloomTextAlign=${node.data.textAlign};flowloomVerticalAlign=${node.data.verticalAlign};flowloomDescription=${description};flowloomLocked=${node.data.locked ? 1 : 0};whiteSpace=wrap;html=1;fillColor=${node.data.fill};strokeColor=${node.data.stroke};fontColor=${node.data.textColor};strokeWidth=${node.data.borderWidth};fontSize=${node.data.fontSize};fontStyle=${node.data.fontWeight >= 700 ? 1 : 0};align=${node.data.textAlign};verticalAlign=${node.data.verticalAlign};opacity=${Math.round(node.data.opacity * 100)};`;
 }
 
 function mxArrow(kind: ArrowHead | undefined): string {
   return kind === 'none' ? 'none' : kind === 'open' ? 'open' : 'block';
 }
 
-export function serializeDrawio(title: string, nodes: FlowNode[], edges: FlowEdge[]): string {
+function serializeDrawioModel(nodes: FlowNode[], edges: FlowEdge[], layers: DiagramPage['layers']): string {
+  const safeLayers = layers.length ? layers : [createDefaultLayer()];
+  const layerIds = new Set(safeLayers.map((layer) => layer.id));
+  const layerCells = safeLayers.map((layer) => `<mxCell id="${xmlEscape(layer.id)}" value="${xmlEscape(layer.name)}" parent="0"${layer.visible ? '' : ' visible="0"'}${layer.locked ? ' locked="1"' : ''}/>`).join('');
   const nodeCells = nodes.map((node) => {
     const width = Number(node.measured?.width ?? node.width ?? node.style?.width ?? SHAPE_DIMENSIONS[node.data.kind].width);
     const height = Number(node.measured?.height ?? node.height ?? node.style?.height ?? SHAPE_DIMENSIONS[node.data.kind].height);
-    return `<mxCell id="${xmlEscape(node.id)}" value="${xmlEscape(node.data.label)}" style="${xmlEscape(mxStyle(node))}" vertex="1" parent="1"><mxGeometry x="${node.position.x}" y="${node.position.y}" width="${width}" height="${height}" as="geometry"/></mxCell>`;
+    const parent = node.parentId ?? (layerIds.has(node.data.layerId ?? '') ? node.data.layerId : safeLayers[0].id);
+    return `<mxCell id="${xmlEscape(node.id)}" value="${xmlEscape(node.data.label)}" style="${xmlEscape(mxStyle(node))}" vertex="1" parent="${xmlEscape(parent)}"${node.data.hidden ? ' visible="0"' : ''}${node.data.locked ? ' locked="1"' : ''}><mxGeometry x="${node.position.x}" y="${node.position.y}" width="${width}" height="${height}" as="geometry"/></mxCell>`;
   }).join('');
   const edgeCells = edges.map((edge) => {
     const routing = edge.data?.routing ?? 'smoothstep';
     const routeStyle = routing === 'smoothstep' ? 'edgeStyle=orthogonalEdgeStyle;rounded=0' : routing === 'bezier' ? 'curved=1' : 'edgeStyle=none';
     const style = `${routeStyle};html=1;strokeColor=${edge.data?.color ?? '#555555'};strokeWidth=${edge.data?.width ?? 1.75};dashed=${edge.data?.lineStyle === 'solid' ? 0 : 1};dashPattern=${edge.data?.lineStyle === 'dotted' ? '1 4' : '8 6'};startArrow=${mxArrow(edge.data?.arrowStart)};endArrow=${mxArrow(edge.data?.arrowEnd)};`;
-    return `<mxCell id="${xmlEscape(edge.id)}" value="${xmlEscape(edge.data?.label ?? edge.label ?? '')}" style="${xmlEscape(style)}" edge="1" parent="1" source="${xmlEscape(edge.source)}" target="${xmlEscape(edge.target)}"><mxGeometry relative="1" as="geometry"/></mxCell>`;
+    return `<mxCell id="${xmlEscape(edge.id)}" value="${xmlEscape(edge.data?.label ?? edge.label ?? '')}" style="${xmlEscape(style)}" edge="1" parent="${xmlEscape(safeLayers[0].id)}" source="${xmlEscape(edge.source)}" target="${xmlEscape(edge.target)}"><mxGeometry relative="1" as="geometry"/></mxCell>`;
   }).join('');
-  return `<mxfile host="Flowloom" modified="${new Date().toISOString()}"><diagram id="flowloom" name="${xmlEscape(title)}"><mxGraphModel grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1169" pageHeight="827"><root><mxCell id="0"/><mxCell id="1" parent="0"/>${nodeCells}${edgeCells}</root></mxGraphModel></diagram></mxfile>`;
+  return `<mxGraphModel grid="1" gridSize="10" page="1" pageScale="1" pageWidth="1169" pageHeight="827"><root><mxCell id="0"/>${layerCells}${nodeCells}${edgeCells}</root></mxGraphModel>`;
+}
+
+export function serializeDrawio(
+  title: string,
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+  pages?: DiagramPage[],
+  activePageId?: string,
+): string {
+  const documentPages = pages?.length
+    ? pages.map((page) => page.id === activePageId ? { ...page, nodes, edges } : page)
+    : [{ id: 'flowloom', name: title, nodes, edges, layers: [createDefaultLayer()] }];
+  const diagrams = documentPages.map((page) => `<diagram id="${xmlEscape(page.id)}" name="${xmlEscape(page.name)}">${serializeDrawioModel(page.nodes, page.edges, page.layers)}</diagram>`).join('');
+  return `<mxfile host="Flowloom" modified="${new Date().toISOString()}">${diagrams}</mxfile>`;
 }
 
 function mermaidShape(node: FlowNode): string {
@@ -835,9 +990,24 @@ export function serializeCsv(nodes: FlowNode[], edges: FlowEdge[]): string {
   return ['source,target,label,source_name,target_name', ...edges.map((edge) => [edge.source, edge.target, edge.data?.label ?? edge.label ?? '', labels.get(edge.source) ?? '', labels.get(edge.target) ?? ''].map(quote).join(','))].join('\n');
 }
 
-export function serializeDocument(title: string, nodes: FlowNode[], edges: FlowEdge[]): string {
+export function serializeDocument(
+  title: string,
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+  pages?: DiagramPage[],
+  activePageId?: string,
+): string {
   const now = new Date().toISOString();
-  return JSON.stringify({ version: 1, title, nodes, edges, meta: { createdAt: now, updatedAt: now, sourceFormat: 'Flowloom', fidelity: 'structural' } }, null, 2);
+  const documentPages = pages?.length
+    ? pages.map((page) => page.id === activePageId ? { ...page, nodes, edges } : page)
+    : [{ id: 'page-1', name: '页面 1', nodes, edges, layers: [createDefaultLayer()] }];
+  return JSON.stringify({
+    version: 2,
+    title,
+    activePageId: activePageId ?? documentPages[0].id,
+    pages: documentPages,
+    meta: { createdAt: now, updatedAt: now, sourceFormat: 'Flowloom', fidelity: 'structural' },
+  }, null, 2);
 }
 
 export function downloadText(filename: string, content: string, type = 'text/plain;charset=utf-8') {
@@ -856,7 +1026,8 @@ export function supportedImportSummary(): string[] {
     'Mermaid / Graphviz DOT / PlantUML',
     'BPMN 2.0 / Excalidraw / CSV edge list',
     'Visio VSDX（基础结构）',
-    'SVG / PNG / JPG / WebP / PDF（视觉参考）',
+    'SVG（基础图元可编辑，复杂效果混合保真）',
+    'PNG / JPG / WebP / PDF（视觉参考）',
   ];
 }
 

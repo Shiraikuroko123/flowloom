@@ -11,6 +11,7 @@ import type { FlowNode as FlowNodeType } from '../types';
 import { getShapeDefinition } from '../lib/shapeRegistry';
 import { useFlowStore } from '../store/flowStore';
 import { ShapeVisual } from './ShapeVisual';
+import { SvgVectorVisual } from './SvgVectorVisual';
 
 const positions = [Position.Top, Position.Right, Position.Bottom, Position.Left];
 
@@ -23,6 +24,8 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
   const endTransaction = useFlowStore((state) => state.endTransaction);
   const updateNodeInternals = useUpdateNodeInternals();
   const definition = getShapeDefinition(data.kind);
+  const supportsInlineTextEditing = data.kind !== 'image'
+    && (data.kind !== 'vector' || data.vector?.tag === 'text');
 
   useEffect(() => setDraft(data.label), [data.label]);
   useEffect(() => {
@@ -56,7 +59,20 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
     '--node-font-weight': data.fontWeight,
     '--node-text-align': data.textAlign,
     '--node-opacity': data.opacity,
+    '--node-rotation': `${data.rotation ?? 0}deg`,
   } as CSSProperties;
+
+  const textEditor = (
+    <input
+      ref={inputRef}
+      className="flow-node__editor nodrag"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={finishEditing}
+      onKeyDown={handleKeyDown}
+      aria-label="图形文字"
+    />
+  );
 
   const visualContent = data.kind === 'image' ? (
     <div className="flow-node__image-wrap">
@@ -71,17 +87,7 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
         ? <span className="sr-only">{data.label}</span>
         : <span className="flow-node__image-label">{data.label}</span>}
     </div>
-  ) : editing ? (
-    <input
-      ref={inputRef}
-      className="flow-node__editor nodrag"
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={finishEditing}
-      onKeyDown={handleKeyDown}
-      aria-label="图形文字"
-    />
-  ) : (
+  ) : editing ? textEditor : (
     <>
       <span className="flow-node__label">{data.label}</span>
       {data.description && <span className="flow-node__description">{data.description}</span>}
@@ -99,7 +105,7 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
       className={`flow-node flow-node--${data.kind} ${selected ? 'is-selected' : ''} ${data.locked ? 'is-locked' : ''}`}
       style={variables}
       onDoubleClick={(event) => {
-        if (data.locked || data.kind === 'image') return;
+        if (data.locked || !supportsInlineTextEditing) return;
         event.stopPropagation();
         beginTransaction();
         setEditing(true);
@@ -124,7 +130,13 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
           isConnectable={!data.locked}
         />
       ))}
-      {data.kind !== 'image' && (
+      <div className="flow-node__rotatable">
+      {data.kind === 'vector' ? (
+        <>
+          <SvgVectorVisual data={data} />
+          {editing && <div className="flow-node__vector-editor">{textEditor}</div>}
+        </>
+      ) : data.kind !== 'image' && (
         <ShapeVisual
           className="flow-node__shape"
           kind={data.kind}
@@ -134,11 +146,14 @@ export function FlowNode({ id, data, selected }: NodeProps<FlowNodeType>) {
           radius={data.radius}
         />
       )}
+      {data.kind !== 'vector' && (
       <div
         className={`flow-node__content flow-node__content--${definition.textPlacement} flow-node__content--v-${verticalClass}`}
         style={{ padding: definition.contentPadding }}
       >
         {visualContent}
+      </div>
+      )}
       </div>
       {data.locked && <LockKeyhole className="flow-node__lock" size={13} aria-hidden="true" />}
     </div>

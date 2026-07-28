@@ -47,6 +47,7 @@
   --space-5: 24px;
   --topbar-height: 56px;
   --status-height: 26px;
+  --pagebar-height: 36px;
   --library-width: 248px;
   --inspector-width: 294px;
   --z-dropdown: 40;
@@ -178,9 +179,10 @@ textarea::placeholder {
   grid-template-areas:
     "topbar topbar topbar"
     "library canvas inspector"
+    "pagebar pagebar pagebar"
     "status status status";
   grid-template-columns: var(--left-column) minmax(0, 1fr) var(--right-column);
-  grid-template-rows: var(--topbar-height) minmax(0, 1fr) var(--status-height);
+  grid-template-rows: var(--topbar-height) minmax(0, 1fr) var(--pagebar-height) var(--status-height);
   width: 100%;
   height: 100dvh;
   min-height: 520px;
@@ -448,6 +450,37 @@ textarea::placeholder {
   overflow: hidden;
   background: var(--surface);
   color: var(--ink);
+}
+
+.inspector-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: 38px;
+  padding: 0 var(--space-3);
+  border-block-end: 1px solid var(--border);
+}
+
+.inspector-tabs button {
+  position: relative;
+  border: 0;
+  background: transparent;
+  color: var(--muted-strong);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.inspector-tabs button:hover,
+.inspector-tabs button.is-active {
+  color: var(--ink);
+}
+
+.inspector-tabs button.is-active::after {
+  position: absolute;
+  inset-inline: 12px;
+  inset-block-end: -1px;
+  height: 2px;
+  background: var(--brand-strong);
+  content: "";
 }
 
 .library-panel {
@@ -757,6 +790,21 @@ textarea::placeholder {
   padding-block-end: 48px;
 }
 
+.inspector-readonly {
+  margin: var(--space-3);
+  padding: 9px 11px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-md);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 0.6875rem;
+  line-height: 1.45;
+}
+
+.inspector-edit-fields[aria-disabled="true"] {
+  opacity: 0.62;
+}
+
 .inspector-section {
   padding: var(--space-4);
   border-block-end: 1px solid var(--border);
@@ -859,6 +907,283 @@ textarea::placeholder {
 .inspector-spacing-top,
 .inspector-full-button {
   margin-block-start: var(--space-3);
+}
+
+.rotation-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.rotation-field > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.rotation-field input {
+  min-width: 0;
+  flex: 1;
+}
+
+.layer-panel {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.layer-panel__toolbar {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px var(--space-3);
+  border-block-end: 1px solid var(--border);
+}
+
+.layer-panel__toolbar > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.layer-panel__toolbar strong {
+  font-size: 0.75rem;
+}
+
+.layer-panel__toolbar span {
+  color: var(--muted);
+  font-size: 0.625rem;
+}
+
+.layer-list {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.layer-item {
+  border-block-end: 1px solid var(--border);
+}
+
+.layer-item.is-active {
+  background: var(--surface-raised);
+}
+
+.layer-item__row,
+.layer-item__controls,
+.layer-node {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.layer-item__row {
+  min-height: 40px;
+  padding: 3px 5px 3px 8px;
+}
+
+.layer-item__name,
+.layer-node__name {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  text-align: start;
+}
+
+.layer-item__name {
+  gap: 7px;
+  height: 34px;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+}
+
+.layer-item__name:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.layer-item__name span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-item__name small {
+  color: var(--muted);
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.layer-item__controls {
+  gap: 2px;
+  padding: 5px 5px 5px 12px;
+  border-block-start: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.layer-item__controls input {
+  min-width: 0;
+  height: 30px;
+  flex: 1;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font-size: 0.6875rem;
+}
+
+.layer-item__move {
+  width: calc(100% - 16px);
+  min-height: 32px;
+  margin: 4px 8px 7px;
+  font-size: 0.6875rem;
+}
+
+.layer-node-list {
+  border-block-start: 1px solid var(--border);
+}
+
+.layer-node-list__empty {
+  display: block;
+  padding: 14px;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  text-align: center;
+}
+
+.layer-node {
+  min-height: 39px;
+  padding: 3px 5px 3px 18px;
+}
+
+.layer-node + .layer-node {
+  border-block-start: 1px solid var(--border);
+}
+
+.layer-node.is-selected {
+  background: var(--brand-soft);
+}
+
+.layer-node__name {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2px 5px;
+  overflow: hidden;
+}
+
+.layer-node__name span,
+.layer-node__name strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-node__name span {
+  color: var(--muted);
+  font-size: 0.5625rem;
+  font-weight: 500;
+}
+
+.layer-node__name strong {
+  color: var(--ink-soft);
+  font-size: 0.6875rem;
+}
+
+.page-bar {
+  grid-area: pagebar;
+  z-index: var(--z-sticky);
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  border-block-start: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.page-bar__tabs {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.page-tab {
+  display: inline-flex;
+  min-width: 96px;
+  max-width: 200px;
+  height: 35px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 0;
+  border-inline-end: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted-strong);
+  font-size: 0.6875rem;
+}
+
+.page-tab:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.page-tab.is-active {
+  box-shadow: inset 0 2px var(--brand-strong);
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+.page-tab span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-tab small {
+  color: var(--muted);
+  font-size: 0.5625rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-tab--editing {
+  padding: 3px 6px;
+  background: var(--canvas);
+}
+
+.page-tab--editing input {
+  min-width: 0;
+  height: 27px;
+  flex: 1;
+  padding: 2px 6px;
+  border: 1px solid var(--focus);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font-size: 0.6875rem;
+}
+
+.page-bar__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 2px 5px;
+  border-inline-start: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .inspector-full-button {
@@ -1052,6 +1377,42 @@ input[type="range"] {
   justify-content: center;
   color: var(--node-text);
   opacity: var(--node-opacity);
+}
+
+.flow-node__rotatable {
+  position: absolute;
+  inset: 0;
+  transform: rotate(var(--node-rotation, 0deg));
+  transform-origin: center;
+  pointer-events: none;
+}
+
+.flow-node__vector {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.flow-node__vector-editor {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  pointer-events: none;
+}
+
+.flow-node__vector-editor .flow-node__editor {
+  pointer-events: auto;
+}
+
+.flow-node--vector .flow-node__handle {
+  z-index: 3;
 }
 
 .flow-node__shape {
@@ -1975,6 +2336,7 @@ kbd {
     grid-template-areas:
       "topbar"
       "canvas"
+      "pagebar"
       "status";
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1990,7 +2352,7 @@ kbd {
   .library-panel,
   .inspector {
     position: fixed;
-    inset-block: var(--topbar-height) var(--status-height);
+    inset-block: var(--topbar-height) calc(var(--status-height) + var(--pagebar-height));
     z-index: var(--z-sticky);
     width: min(310px, 86vw);
     box-shadow: 4px 0 8px oklch(0.18 0.018 70 / 0.12);

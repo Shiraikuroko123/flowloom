@@ -1,6 +1,6 @@
 import type { ShapeKind } from '../types';
 
-export type ShapeCategory = 'flowchart' | 'bpmn' | 'uml' | 'basic' | 'container' | 'internal';
+export type ShapeCategory = 'flowchart' | 'bpmn' | 'uml' | 'erd' | 'architecture' | 'basic' | 'container' | 'internal';
 export type ShapeTextPlacement = 'center' | 'left' | 'header' | 'lane' | 'footer';
 
 export interface ShapeDefinition {
@@ -23,6 +23,8 @@ export const SHAPE_CATEGORY_LABELS: Record<Exclude<ShapeCategory, 'internal'>, s
   flowchart: '标准流程图',
   bpmn: 'BPMN 2.0',
   uml: 'UML',
+  erd: '实体关系图',
+  architecture: '系统架构',
   basic: '基础图形',
   container: '容器与标注',
 };
@@ -92,6 +94,19 @@ export const SHAPE_REGISTRY: ShapeDefinition[] = [
   define('bpmn-data-object', '数据对象', 'BPMN Data Object', 'bpmn', 112, 92, 'shape=document', ['数据对象', 'data object'], { contentPadding: '10px 18px 10px 12px' }),
   define('bpmn-data-store', '数据存储', 'BPMN Data Store', 'bpmn', 128, 92, 'shape=cylinder3', ['数据仓库', 'data store'], { contentPadding: '18px 12px 10px' }),
   define('bpmn-pool', '参与者池', 'BPMN Pool', 'bpmn', 440, 220, 'swimlane;horizontal=0;startSize=36', ['参与者', 'pool', 'participant'], { minWidth: 260, minHeight: 120, textPlacement: 'lane', contentPadding: '10px 8px' }),
+  define('bpmn-message-event', '消息事件', 'BPMN Message Event', 'bpmn', 64, 64, 'ellipse=1', ['消息', '邮件', 'message event'], { minWidth: 40, contentPadding: '16%' }),
+  define('bpmn-timer-event', '定时事件', 'BPMN Timer Event', 'bpmn', 64, 64, 'ellipse=1', ['定时器', '超时', 'timer event'], { minWidth: 40, contentPadding: '16%' }),
+  define('bpmn-error-event', '错误事件', 'BPMN Error Event', 'bpmn', 64, 64, 'ellipse=1', ['异常', '错误', 'error event'], { minWidth: 40, contentPadding: '16%' }),
+  define('bpmn-signal-event', '信号事件', 'BPMN Signal Event', 'bpmn', 64, 64, 'ellipse=1', ['信号', '广播', 'signal event'], { minWidth: 40, contentPadding: '16%' }),
+  define('bpmn-send-task', '发送任务', 'BPMN Send Task', 'bpmn', 176, 80, 'rounded=1;arcSize=12', ['发送', '消息', 'send task'], { contentPadding: '10px 14px 10px 34px' }),
+  define('bpmn-receive-task', '接收任务', 'BPMN Receive Task', 'bpmn', 176, 80, 'rounded=1;arcSize=12', ['接收', '消息', 'receive task'], { contentPadding: '10px 14px 10px 34px' }),
+  define('bpmn-manual-task', '人工任务', 'BPMN Manual Task', 'bpmn', 176, 80, 'rounded=1;arcSize=12', ['人工', '手工', 'manual task'], { contentPadding: '10px 14px 10px 34px' }),
+  define('bpmn-business-rule-task', '业务规则任务', 'BPMN Business Rule Task', 'bpmn', 176, 80, 'rounded=1;arcSize=12', ['规则', '决策表', 'business rule task'], { contentPadding: '10px 14px 10px 34px' }),
+  define('bpmn-script-task', '脚本任务', 'BPMN Script Task', 'bpmn', 176, 80, 'rounded=1;arcSize=12', ['脚本', '自动执行', 'script task'], { contentPadding: '10px 14px 10px 34px' }),
+  define('bpmn-call-activity', '调用活动', 'BPMN Call Activity', 'bpmn', 184, 84, 'rounded=1;arcSize=12;strokeWidth=3', ['调用', '全局任务', 'call activity']),
+  define('bpmn-event-gateway', '事件网关', 'BPMN Event-based Gateway', 'bpmn', 92, 92, 'rhombus', ['事件', '网关', 'event gateway'], { contentPadding: '26%' }),
+  define('bpmn-complex-gateway', '复杂网关', 'BPMN Complex Gateway', 'bpmn', 92, 92, 'rhombus', ['复杂', '网关', 'complex gateway'], { contentPadding: '26%' }),
+  define('bpmn-transaction', '事务子流程', 'BPMN Transaction', 'bpmn', 220, 120, 'rounded=1;arcSize=10;double=1', ['事务', '子流程', 'transaction'], { minWidth: 150, minHeight: 80 }),
 
   define('uml-actor', '参与者', 'UML Actor', 'uml', 92, 124, 'shape=umlActor', ['角色', '用户', 'actor'], { minWidth: 60, minHeight: 90, textPlacement: 'footer', contentPadding: '86px 6px 6px' }),
   define('uml-use-case', '用例', 'UML Use Case', 'uml', 176, 84, 'ellipse=1', ['功能', 'use case'], { contentPadding: '12px 24px' }),
@@ -100,6 +115,34 @@ export const SHAPE_REGISTRY: ShapeDefinition[] = [
   define('uml-component', '组件', 'UML Component', 'uml', 184, 100, 'shape=component', ['模块', '接口', 'component'], { contentPadding: '10px 18px 10px 32px' }),
   define('uml-state', '状态', 'UML State', 'uml', 176, 80, 'rounded=1;arcSize=18', ['状态机', 'state']),
   define('uml-note', 'UML 注释', 'UML Note', 'uml', 176, 96, 'shape=note', ['注释', '说明', 'uml note'], { textPlacement: 'left', contentPadding: '12px 22px 12px 12px' }),
+  define('uml-interface', '接口', 'UML Interface', 'uml', 88, 120, 'shape=lollipop', ['接口', '棒棒糖', 'interface'], { minWidth: 60, minHeight: 80, textPlacement: 'footer', contentPadding: '86px 6px 6px' }),
+  define('uml-object', '对象', 'UML Object', 'uml', 184, 92, 'rounded=0', ['实例', '对象图', 'object']),
+  define('uml-artifact', '制品', 'UML Artifact', 'uml', 160, 104, 'shape=document', ['文件', '部署制品', 'artifact']),
+  define('uml-node', '部署节点', 'UML Deployment Node', 'uml', 176, 120, 'shape=cube', ['设备', '执行环境', 'deployment node']),
+  define('uml-activity', '活动', 'UML Activity', 'uml', 176, 76, 'rounded=1;arcSize=28', ['活动图', '动作', 'activity']),
+  define('uml-decision', '活动判断', 'UML Decision', 'uml', 84, 84, 'rhombus', ['活动图', '判断', 'decision'], { contentPadding: '26%' }),
+  define('uml-final-state', '终止状态', 'UML Final State', 'uml', 64, 64, 'ellipse=1', ['结束', '终止', 'final state'], { minWidth: 40, contentPadding: '18%' }),
+  define('uml-lifeline', '生命线', 'UML Lifeline', 'uml', 140, 240, 'shape=umlLifeline', ['时序图', '参与者', 'lifeline'], { minWidth: 90, minHeight: 140, textPlacement: 'header', contentPadding: '8px 10px' }),
+
+  define('erd-entity', '实体', 'ER Entity', 'erd', 176, 78, 'rounded=0', ['实体', 'ER', 'entity']),
+  define('erd-weak-entity', '弱实体', 'ER Weak Entity', 'erd', 176, 84, 'rounded=0;double=1', ['弱实体', 'weak entity']),
+  define('erd-relationship', '联系', 'ER Relationship', 'erd', 126, 90, 'rhombus', ['关系', '联系', 'relationship'], { contentPadding: '22%' }),
+  define('erd-identifying-relationship', '标识联系', 'ER Identifying Relationship', 'erd', 136, 96, 'rhombus;double=1', ['标识关系', 'identifying relationship'], { contentPadding: '23%' }),
+  define('erd-attribute', '属性', 'ER Attribute', 'erd', 150, 70, 'ellipse=1', ['字段', '属性', 'attribute']),
+  define('erd-key-attribute', '主键属性', 'ER Key Attribute', 'erd', 150, 70, 'ellipse=1', ['主键', '关键属性', 'key attribute']),
+  define('erd-multivalued-attribute', '多值属性', 'ER Multivalued Attribute', 'erd', 156, 76, 'ellipse=1;double=1', ['多值', 'multivalued attribute']),
+  define('erd-table', '数据表', 'ER Table', 'erd', 210, 140, 'swimlane;startSize=34', ['表', '字段列表', 'table'], { textPlacement: 'header', contentPadding: '8px 12px' }),
+
+  define('arch-service', '服务', 'Application Service', 'architecture', 176, 80, 'rounded=1;arcSize=12', ['微服务', '应用服务', 'service']),
+  define('arch-api', 'API 接口', 'API Endpoint', 'architecture', 160, 76, 'shape=hexagon', ['接口', '网关', 'API']),
+  define('arch-server', '服务器', 'Server', 'architecture', 128, 112, 'shape=mxgraph.networks.server', ['主机', '计算节点', 'server']),
+  define('arch-database', '架构数据库', 'Architecture Database', 'architecture', 140, 104, 'shape=cylinder3', ['持久化', '数据库', 'database']),
+  define('arch-cache', '缓存', 'Cache', 'architecture', 148, 88, 'shape=cylinder3', ['Redis', '内存缓存', 'cache']),
+  define('arch-queue', '消息队列', 'Message Queue', 'architecture', 176, 82, 'shape=mxgraph.basic.rect', ['Kafka', '队列', '消息总线', 'queue']),
+  define('arch-storage', '对象存储', 'Object Storage', 'architecture', 156, 100, 'shape=folder', ['文件', 'Bucket', 'storage']),
+  define('arch-load-balancer', '负载均衡', 'Load Balancer', 'architecture', 176, 88, 'shape=mxgraph.networks.load_balancer', ['LB', '流量', 'load balancer']),
+  define('arch-firewall', '防火墙', 'Firewall', 'architecture', 156, 96, 'shape=mxgraph.networks.firewall', ['安全', '网络边界', 'firewall']),
+  define('arch-client', '客户端', 'Client Device', 'architecture', 148, 104, 'shape=mxgraph.networks.pc', ['浏览器', '桌面', '终端', 'client']),
 
   define('rectangle', '矩形', 'Rectangle', 'basic', 176, 80, 'rounded=0', ['方框', 'rectangle']),
   define('rounded-rectangle', '圆角矩形', 'Rounded Rectangle', 'basic', 176, 80, 'rounded=1;arcSize=12', ['圆角', 'rounded rectangle']),
@@ -112,6 +155,7 @@ export const SHAPE_REGISTRY: ShapeDefinition[] = [
   define('note', '便笺', 'Note', 'container', 176, 96, 'shape=note', ['备注', '注释', 'note'], { textPlacement: 'left', contentPadding: '12px 22px 12px 12px' }),
   define('group', '分组容器', 'Group / Container', 'container', 420, 280, 'swimlane;startSize=28', ['容器', '分组', 'container', 'group'], { minWidth: 220, minHeight: 140, textPlacement: 'header', contentPadding: '8px 12px' }),
   define('swimlane', '泳道', 'Swimlane', 'container', 440, 180, 'swimlane;horizontal=0;startSize=40', ['职责', '泳道图', 'lane', 'swimlane'], { minWidth: 260, minHeight: 110, textPlacement: 'lane', contentPadding: '10px 8px' }),
+  define('vector', '矢量图元', 'SVG Vector Element', 'internal', 120, 80, 'shape=mxgraph.basic.rect', ['SVG', '路径', '矢量', 'path', 'vector'], { minWidth: 4, minHeight: 4, visible: false, contentPadding: '0' }),
   define('image', '视觉参考', 'Visual Reference', 'internal', 420, 280, 'rounded=0', ['图片', '参考', 'image'], { minWidth: 120, minHeight: 80, visible: false }),
 ];
 

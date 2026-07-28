@@ -10,6 +10,11 @@ import { createFlowEdge, createFlowNode } from './diagram';
 import { VISIBLE_SHAPES } from './shapeRegistry';
 
 describe('diagram file adapters', () => {
+  it('registers 97 unique, user-visible standard shapes', () => {
+    expect(VISIBLE_SHAPES).toHaveLength(97);
+    expect(new Set(VISIBLE_SHAPES.map((definition) => definition.kind))).toHaveLength(97);
+  });
+
   it('imports Mermaid nodes, decisions, labels, and edges', async () => {
     const source = `flowchart LR
       start([开始]) --> check{资料完整？}
@@ -122,5 +127,110 @@ describe('diagram file adapters', () => {
       locked: true,
     });
     expect(result.edges[0].data).toMatchObject({ arrowStart: 'open', arrowEnd: 'closed', lineStyle: 'dotted', width: 2.5 });
+  });
+
+  it('imports safe SVG primitives as independently editable vector nodes', async () => {
+    const source = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="240" viewBox="0 0 480 240">
+      <g transform="translate(20 10)">
+        <rect id="step" x="10" y="20" width="160" height="64" rx="8" fill="#fff4cc" stroke="#9a6700" stroke-width="2"/>
+        <circle id="event" cx="270" cy="52" r="30" fill="#dcfce7" stroke="#15803d"/>
+        <path id="arrow" d="M170 52 C205 52 220 52 240 52" fill="none" stroke="#334155" stroke-width="3"/>
+        <text id="label" x="90" y="58" text-anchor="middle" font-size="16">审核订单</text>
+      </g>
+    </svg>`;
+    const result = await importDiagramFile(new File([source], 'editable.svg', { type: 'image/svg+xml' }));
+
+    expect(result.fidelity).toBe('structural');
+    expect(result.nodes).toHaveLength(4);
+    expect(result.nodes.every((node) => node.data.kind === 'vector')).toBe(true);
+    expect(result.nodes.find((node) => node.id === 'arrow')?.data.vector?.tag).toBe('path');
+    const label = result.nodes.find((node) => node.id === 'label');
+    expect(label?.data.label).toBe('审核订单');
+    expect(Number(label?.style?.width)).toBeGreaterThan(60);
+    expect(result.nodes.some((node) => node.position.x > 0)).toBe(true);
+  });
+
+  it('keeps a hidden source reference when SVG uses unsupported paint effects', async () => {
+    const source = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">
+      <defs><linearGradient id="paint"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient></defs>
+      <rect id="gradient-box" x="10" y="10" width="180" height="80" fill="url(#paint)"/>
+    </svg>`;
+    const result = await importDiagramFile(new File([source], 'gradient.svg', { type: 'image/svg+xml' }));
+
+    expect(result.fidelity).toBe('hybrid');
+    expect(result.nodes.some((node) => node.data.kind === 'vector')).toBe(true);
+    const reference = result.nodes.find((node) => node.data.kind === 'image');
+    expect(reference?.data).toMatchObject({ hidden: false, locked: true });
+    expect(reference?.position).toEqual({ x: 0, y: 0 });
+    expect(reference?.style).toMatchObject({ width: 200, height: 100 });
+    expect(result.pages?.[0].layers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: '原图参考', visible: false, locked: true }),
+      expect.objectContaining({ name: '可编辑图元', visible: true, locked: false }),
+    ]));
+  });
+
+  it('does not import SVG definition primitives as visible editable nodes', async () => {
+    const source = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120">
+      <defs><rect id="symbol-box" width="80" height="40" fill="#f00"/></defs>
+      <use href="#symbol-box" x="10" y="10"/>
+      <rect id="visible-box" x="120" y="20" width="90" height="60" fill="#fff" stroke="#000"/>
+    </svg>`;
+    const result = await importDiagramFile(new File([source], 'definitions.svg', { type: 'image/svg+xml' }));
+
+    const vectors = result.nodes.filter((node) => node.data.kind === 'vector');
+    expect(vectors).toHaveLength(1);
+    expect(vectors[0].id).toBe('visible-box');
+    expect(result.fidelity).toBe('hybrid');
+  });
+
+  it('round-trips the v2 multi-page document schema', async () => {
+    const first = createFlowNode('process', { x: 10, y: 10 }, '第一页', { id: 'first-page-node' });
+    const second = createFlowNode('decision', { x: 20, y: 20 }, '第二页', { id: 'second-page-node' });
+    const pages = [
+      { id: 'page-a', name: '概览', nodes: [first], edges: [], layers: [{ id: 'layer-a', name: '主层', visible: true, locked: false }] },
+      { id: 'page-b', name: '细节', nodes: [second], edges: [], layers: [{ id: 'layer-b', name: '业务', visible: true, locked: false }] },
+    ];
+    const source = serializeDocument('多页流程', pages[1].nodes, pages[1].edges, pages, 'page-b');
+    const result = await importDiagramFile(new File([source], 'multi.flow.json', { type: 'application/json' }));
+
+    expect(result.pages).toHaveLength(2);
+    expect(result.activePageId).toBe('page-b');
+    expect(result.nodes[0].data.label).toBe('第二页');
+  });
+
+  it('round-trips draw.io pages, layers, groups, visibility, and rotation', async () => {
+    const group = createFlowNode('group', { x: 40, y: 30 }, '分组', { id: 'group' });
+    group.data = { ...group.data, layerId: 'layer-locked', rotation: 12 };
+    const child = createFlowNode('process', { x: 20, y: 40 }, '子节点', { id: 'child', parentId: 'group', extent: 'parent' });
+    child.data = { ...child.data, layerId: 'layer-locked', hidden: true };
+    const second = createFlowNode('database', { x: 90, y: 60 }, '第二页', { id: 'second' });
+    const pages = [
+      {
+        id: 'overview',
+        name: '总览',
+        nodes: [group, child],
+        edges: [],
+        layers: [{ id: 'layer-locked', name: '受控层', visible: true, locked: true }],
+      },
+      {
+        id: 'detail',
+        name: '详情',
+        nodes: [second],
+        edges: [],
+        layers: [{ id: 'layer-detail', name: '数据层', visible: false, locked: false }],
+      },
+    ];
+
+    const source = serializeDrawio('多页 draw.io', pages[0].nodes, [], pages, 'overview');
+    const result = await importDiagramFile(new File([source], 'multi.drawio', { type: 'application/xml' }));
+
+    expect(result.pages?.map((page) => page.name)).toEqual(['总览', '详情']);
+    expect(result.pages?.[0].layers[0]).toMatchObject({ name: '受控层', locked: true, visible: true });
+    expect(result.pages?.[1].layers[0]).toMatchObject({ name: '数据层', visible: false });
+    expect(result.pages?.[0].nodes.find((node) => node.id === 'child')).toMatchObject({
+      parentId: 'group',
+      data: { hidden: true },
+    });
+    expect(result.pages?.[0].nodes.find((node) => node.id === 'group')?.data.rotation).toBe(12);
   });
 });

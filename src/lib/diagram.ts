@@ -7,11 +7,41 @@ import type {
   FlowEdgeData,
   FlowNode,
   FlowNodeData,
+  DiagramLayer,
+  DiagramPage,
   ShapeKind,
 } from '../types';
 import { SHAPE_KINDS } from '../types';
 import { createId } from './id';
 import { getShapeDefinition, isShapeKind } from './shapeRegistry';
+
+export const DEFAULT_LAYER_ID = 'layer-default';
+
+export function estimateSvgTextWidth(text: string, fontSize: number): number {
+  let units = 0;
+  for (const character of Array.from(text)) {
+    if (/\p{Mark}/u.test(character)) continue;
+    if (/\s/u.test(character)) units += 0.33;
+    else if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Extended_Pictographic}]/u.test(character)) units += 1;
+    else units += 0.58;
+  }
+  return Math.max(fontSize * 0.5, units * fontSize);
+}
+
+export function createDefaultLayer(): DiagramLayer {
+  return { id: DEFAULT_LAYER_ID, name: '默认图层', visible: true, locked: false };
+}
+
+export function createDiagramPage(name = '页面 1', overrides: Partial<DiagramPage> = {}): DiagramPage {
+  return {
+    id: createId('page'),
+    name,
+    nodes: [],
+    edges: [],
+    layers: [createDefaultLayer()],
+    ...overrides,
+  };
+}
 
 export const SHAPE_DIMENSIONS = Object.fromEntries(
   SHAPE_KINDS.map((kind) => {
@@ -25,6 +55,9 @@ export const SHAPE_LABELS = Object.fromEntries(
 ) as Record<ShapeKind, string>;
 
 function defaultNodeColors(kind: ShapeKind): Pick<FlowNodeData, 'fill' | 'stroke' | 'textColor'> {
+  if (kind === 'vector') {
+    return { fill: 'transparent', stroke: 'oklch(0.220 0.018 70)', textColor: 'oklch(0.220 0.018 70)' };
+  }
   const category = getShapeDefinition(kind).category;
   if (kind === 'start' || kind === 'bpmn-start-event') {
     return { fill: 'oklch(0.935 0.050 172)', stroke: 'oklch(0.430 0.105 172)', textColor: 'oklch(0.240 0.055 172)' };
@@ -68,6 +101,8 @@ export function createNodeData(kind: ShapeKind, label?: string): FlowNodeData {
     textAlign: 'center',
     verticalAlign: 'middle',
     opacity: 1,
+    rotation: 0,
+    layerId: DEFAULT_LAYER_ID,
   };
 }
 
@@ -148,6 +183,7 @@ export function normalizeNodes(nodes: FlowNode[]): FlowNode[] {
       position: node.position ?? { x: (index % 4) * 220, y: Math.floor(index / 4) * 140 },
       data,
       draggable: !data.locked,
+      hidden: Boolean(data.hidden),
       style: {
         width: dimensions.width,
         height: dimensions.height,

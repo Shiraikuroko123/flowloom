@@ -56,10 +56,21 @@ function ShapeVisualComponent({
     case 'bpmn-task':
     case 'bpmn-user-task':
     case 'bpmn-service-task':
+    case 'bpmn-send-task':
+    case 'bpmn-receive-task':
+    case 'bpmn-manual-task':
+    case 'bpmn-business-rule-task':
+    case 'bpmn-script-task':
+    case 'bpmn-call-activity':
+    case 'bpmn-transaction':
     case 'uml-state':
+    case 'uml-activity':
+    case 'arch-service':
       geometry = (
         <>
           <rect x="2" y="2" width="96" height="96" rx={kind.startsWith('bpmn-') ? 10 : Math.max(10, softRadius)} {...outline} />
+          {kind === 'bpmn-call-activity' && <rect x="6" y="6" width="88" height="88" rx="7" {...detail} />}
+          {kind === 'bpmn-transaction' && <rect x="7" y="7" width="86" height="86" rx="7" {...detail} />}
           {kind === 'bpmn-user-task' && (
             <g {...detail}>
               <circle cx="15" cy="24" r="5" />
@@ -71,6 +82,27 @@ function ShapeVisualComponent({
               <circle cx="15" cy="31" r="8" />
               <circle cx="15" cy="31" r="3" />
               <path d="M15 18v5M15 39v5M2 31h5M23 31h5M6 22l4 4M20 36l4 4M24 22l-4 4M10 36l-4 4" />
+            </g>
+          )}
+          {(kind === 'bpmn-send-task' || kind === 'bpmn-receive-task') && (
+            <g {...detail}>
+              <rect x="7" y="22" width="22" height="17" fill={kind === 'bpmn-send-task' ? stroke : 'none'} />
+              <path d="M8 23L18 31L28 23" stroke={kind === 'bpmn-send-task' ? fill : stroke} />
+            </g>
+          )}
+          {kind === 'bpmn-manual-task' && <path d="M7 40V25C7 20 12 20 12 25V32V20C12 15 17 15 17 20V31V22C17 17 22 17 22 22V34L25 29C28 25 33 29 30 34L24 43H13Z" {...detail} />}
+          {kind === 'bpmn-business-rule-task' && (
+            <g {...detail}>
+              <rect x="7" y="20" width="23" height="24" />
+              <path d="M7 28H30M14 20V44M22 28V44" />
+            </g>
+          )}
+          {kind === 'bpmn-script-task' && <path d="M8 20H29C25 25 32 30 28 35S31 43 27 45H8C12 40 5 36 9 31S5 24 8 20ZM13 28H24M13 34H23M13 40H21" {...detail} />}
+          {kind === 'arch-service' && (
+            <g {...detail}>
+              <circle cx="18" cy="32" r="8" />
+              <circle cx="18" cy="32" r="3" />
+              <path d="M18 19V24M18 40V45M5 32H10M26 32H31M9 23L13 27M23 37L27 41M27 23L23 27M13 37L9 41" />
             </g>
           )}
         </>
@@ -228,15 +260,44 @@ function ShapeVisualComponent({
     case 'bpmn-end-event':
       geometry = <circle cx="50" cy="50" r="44" {...heavy} fill={fill} />;
       break;
+    case 'bpmn-message-event':
+    case 'bpmn-timer-event':
+    case 'bpmn-error-event':
+    case 'bpmn-signal-event':
+      geometry = (
+        <>
+          <circle cx="50" cy="50" r="46" {...outline} />
+          {kind === 'bpmn-message-event' && <path d="M25 34H75V66H25ZM26 35L50 54L74 35" {...detail} />}
+          {kind === 'bpmn-timer-event' && (
+            <g {...detail}>
+              <circle cx="50" cy="50" r="23" />
+              <path d="M50 27V33M50 67V73M27 50H33M67 50H73M50 50V36M50 50L61 57" />
+            </g>
+          )}
+          {kind === 'bpmn-error-event' && <path d="M32 72L44 48L41 29L65 41L55 55L59 72Z" {...heavy} />}
+          {kind === 'bpmn-signal-event' && <polygon points="50,27 73,68 27,68" {...detail} />}
+        </>
+      );
+      break;
     case 'bpmn-exclusive-gateway':
     case 'bpmn-parallel-gateway':
     case 'bpmn-inclusive-gateway':
+    case 'bpmn-event-gateway':
+    case 'bpmn-complex-gateway':
       geometry = (
         <>
           <polygon points="50,2 98,50 50,98 2,50" {...outline} />
           {kind === 'bpmn-exclusive-gateway' && <path d="M34 34L66 66M66 34L34 66" {...heavy} />}
           {kind === 'bpmn-parallel-gateway' && <path d="M50 28V72M28 50H72" {...heavy} />}
           {kind === 'bpmn-inclusive-gateway' && <circle cx="50" cy="50" r="20" {...heavy} />}
+          {kind === 'bpmn-event-gateway' && (
+            <>
+              <circle cx="50" cy="50" r="22" {...detail} />
+              <circle cx="50" cy="50" r="17" {...detail} />
+              <polygon points="50,37 63,47 58,62 42,62 37,47" {...detail} />
+            </>
+          )}
+          {kind === 'bpmn-complex-gateway' && <path d="M50 28V72M31 39L69 61M31 61L69 39" {...heavy} />}
         </>
       );
       break;
@@ -285,6 +346,168 @@ function ShapeVisualComponent({
         </>
       );
       break;
+    case 'uml-interface':
+      geometry = (
+        <g {...detail}>
+          <circle cx="50" cy="26" r="20" fill={fill} />
+          <path d="M50 46V78" />
+        </g>
+      );
+      break;
+    case 'uml-object':
+      geometry = (
+        <>
+          <rect x="2" y="2" width="96" height="96" {...outline} />
+          <path d="M22 66H78" {...detail} />
+        </>
+      );
+      break;
+    case 'uml-artifact':
+      geometry = (
+        <>
+          <path d="M10 2H72L92 22V98H10Z" {...outline} />
+          <path d="M72 2V22H92M28 70H74M28 80H66" {...detail} />
+          <circle cx="24" cy="40" r="6" {...detail} />
+          <path d="M30 40H39" {...detail} />
+        </>
+      );
+      break;
+    case 'uml-node':
+      geometry = (
+        <>
+          <path d="M16 18L34 2H98V82L80 98H16Z" {...outline} />
+          <path d="M16 18H80L98 2M80 18V98" {...detail} />
+        </>
+      );
+      break;
+    case 'uml-decision':
+      geometry = <polygon points="50,2 98,50 50,98 2,50" {...outline} />;
+      break;
+    case 'uml-final-state':
+      geometry = (
+        <>
+          <circle cx="50" cy="50" r="46" {...outline} />
+          <circle cx="50" cy="50" r="31" fill={stroke} stroke="none" />
+        </>
+      );
+      break;
+    case 'uml-lifeline':
+      geometry = (
+        <>
+          <rect x="8" y="2" width="84" height="24" {...outline} />
+          <path d="M50 26V98" strokeDasharray="6 5" {...detail} />
+        </>
+      );
+      break;
+    case 'erd-entity':
+      geometry = <rect x="2" y="2" width="96" height="96" {...outline} />;
+      break;
+    case 'erd-weak-entity':
+      geometry = (
+        <>
+          <rect x="2" y="2" width="96" height="96" {...outline} />
+          <rect x="7" y="7" width="86" height="86" {...detail} />
+        </>
+      );
+      break;
+    case 'erd-relationship':
+    case 'erd-identifying-relationship':
+      geometry = (
+        <>
+          <polygon points="50,2 98,50 50,98 2,50" {...outline} />
+          {kind === 'erd-identifying-relationship' && <polygon points="50,10 90,50 50,90 10,50" {...detail} />}
+        </>
+      );
+      break;
+    case 'erd-attribute':
+    case 'erd-key-attribute':
+    case 'erd-multivalued-attribute':
+      geometry = (
+        <>
+          <ellipse cx="50" cy="50" rx="48" ry="44" {...outline} />
+          {kind === 'erd-multivalued-attribute' && <ellipse cx="50" cy="50" rx="42" ry="37" {...detail} />}
+          {kind === 'erd-key-attribute' && <path d="M24 68H76" {...detail} />}
+        </>
+      );
+      break;
+    case 'erd-table':
+      geometry = (
+        <>
+          <rect x="2" y="2" width="96" height="96" {...outline} />
+          <path d="M2 26H98M2 50H98M2 74H98M31 26V98" {...detail} />
+        </>
+      );
+      break;
+    case 'arch-api':
+      geometry = (
+        <>
+          <polygon points="18,2 82,2 98,50 82,98 18,98 2,50" {...outline} />
+          <path d="M25 50H75M62 37L75 50L62 63" {...detail} />
+        </>
+      );
+      break;
+    case 'arch-server':
+      geometry = (
+        <>
+          <rect x="10" y="4" width="80" height="92" rx="4" {...outline} />
+          <path d="M10 34H90M10 64H90" {...detail} />
+          <circle cx="23" cy="20" r="3" fill={stroke} /><circle cx="23" cy="49" r="3" fill={stroke} /><circle cx="23" cy="79" r="3" fill={stroke} />
+          <path d="M35 20H75M35 49H75M35 79H75" {...detail} />
+        </>
+      );
+      break;
+    case 'arch-database':
+    case 'arch-cache':
+      geometry = (
+        <>
+          <path d="M8 18C8 8 27 2 50 2S92 8 92 18V82C92 92 73 98 50 98S8 92 8 82Z" {...outline} />
+          <ellipse cx="50" cy="18" rx="42" ry="16" {...detail} />
+          {kind === 'arch-cache' && <path d="M26 54H74M34 42L26 54L34 66M66 42L74 54L66 66" {...heavy} />}
+        </>
+      );
+      break;
+    case 'arch-queue':
+      geometry = (
+        <>
+          <rect x="2" y="2" width="96" height="96" rx="4" {...outline} />
+          <path d="M18 28H82M18 50H82M18 72H82" {...detail} />
+          <circle cx="13" cy="28" r="3" fill={stroke} /><circle cx="13" cy="50" r="3" fill={stroke} /><circle cx="13" cy="72" r="3" fill={stroke} />
+        </>
+      );
+      break;
+    case 'arch-storage':
+      geometry = (
+        <>
+          <path d="M2 18H38V6H64L76 18H98V94H2Z" {...outline} />
+          <path d="M20 46H80M20 62H72" {...detail} />
+        </>
+      );
+      break;
+    case 'arch-load-balancer':
+      geometry = (
+        <>
+          <circle cx="50" cy="50" r="46" {...outline} />
+          <path d="M50 22V78M50 30L30 50M50 30L70 50M30 50V72M70 50V72M22 72H38M62 72H78" {...heavy} />
+        </>
+      );
+      break;
+    case 'arch-firewall':
+      geometry = (
+        <>
+          <rect x="2" y="8" width="96" height="84" {...outline} />
+          <path d="M2 29H98M2 50H98M2 71H98M25 8V29M73 8V29M14 29V50M50 29V50M86 29V50M25 50V71M73 50V71M14 71V92M50 71V92M86 71V92" {...detail} />
+        </>
+      );
+      break;
+    case 'arch-client':
+      geometry = (
+        <>
+          <rect x="8" y="8" width="84" height="62" rx="4" {...outline} />
+          <path d="M50 70V84M30 90H70" {...heavy} />
+          <path d="M16 18H84V60H16Z" {...detail} />
+        </>
+      );
+      break;
     case 'uml-note':
     case 'note':
       geometry = (
@@ -308,6 +531,7 @@ function ShapeVisualComponent({
         </>
       );
       break;
+    case 'vector':
     case 'image':
       geometry = <rect x="2" y="2" width="96" height="96" rx="2" {...outline} />;
       break;

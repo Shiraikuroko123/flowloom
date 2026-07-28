@@ -38,7 +38,7 @@ import {
   Hand,
   ImageDown,
   Layers3,
-  Map,
+  Map as MapIcon,
   Menu,
   Moon,
   MousePointer2,
@@ -70,12 +70,14 @@ import { LibraryPanel } from './components/LibraryPanel';
 import { Inspector } from './components/Inspector';
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
 import { ToastRegion } from './components/ToastRegion';
+import { PageBar } from './components/PageBar';
 import { useFlowStore } from './store/flowStore';
 import { createFlowNode, findOpenNodePosition } from './lib/diagram';
 import { createId } from './lib/id';
 import { getShapeDefinition, isShapeKind } from './lib/shapeRegistry';
 
-const DRAFT_KEY = 'flowloom.document.v1';
+const DRAFT_KEY = 'flowloom.document.v2';
+const LEGACY_DRAFT_KEY = 'flowloom.document.v1';
 const MOBILE_VIEWPORT_QUERY = '(max-width: 900px)';
 const nodeTypes = { flowNode: FlowNodeComponent };
 const AiDialog = lazy(() => import('./components/AiDialog').then((module) => ({ default: module.AiDialog })));
@@ -176,7 +178,7 @@ function CanvasControls({
       <span className="control-divider" />
       <IconButton label="适合画布" icon={<Focus size={17} />} onClick={() => fitView({ padding: 0.16, duration: 260 })} />
       <IconButton label="对齐网格" icon={<Grid3X3 size={17} />} active={snap} onClick={onToggleSnap} />
-      <IconButton label="缩略图" icon={<Map size={17} />} active={minimap} onClick={onToggleMinimap} />
+      <IconButton label="缩略图" icon={<MapIcon size={17} />} active={minimap} onClick={onToggleMinimap} />
     </div>
   );
 }
@@ -192,6 +194,9 @@ function EditorApp() {
   const title = useFlowStore((state) => state.title);
   const nodes = useFlowStore((state) => state.nodes);
   const edges = useFlowStore((state) => state.edges);
+  const layers = useFlowStore((state) => state.layers);
+  const pages = useFlowStore((state) => state.pages);
+  const activePageId = useFlowStore((state) => state.activePageId);
   const past = useFlowStore((state) => state.past);
   const future = useFlowStore((state) => state.future);
   const dirty = useFlowStore((state) => state.dirty);
@@ -206,10 +211,14 @@ function EditorApp() {
   const addNode = useFlowStore((state) => state.addNode);
   const deleteSelection = useFlowStore((state) => state.deleteSelection);
   const duplicateSelection = useFlowStore((state) => state.duplicateSelection);
+  const nudgeSelection = useFlowStore((state) => state.nudgeSelection);
+  const groupSelection = useFlowStore((state) => state.groupSelection);
+  const ungroupSelection = useFlowStore((state) => state.ungroupSelection);
   const selectAll = useFlowStore((state) => state.selectAll);
   const clearSelection = useFlowStore((state) => state.clearSelection);
   const insertGraph = useFlowStore((state) => state.insertGraph);
   const loadGraph = useFlowStore((state) => state.loadGraph);
+  const loadDocument = useFlowStore((state) => state.loadDocument);
   const loadTemplate = useFlowStore((state) => state.loadTemplate);
   const restoreDraft = useFlowStore((state) => state.restoreDraft);
   const newDocument = useFlowStore((state) => state.newDocument);
@@ -232,6 +241,29 @@ function EditorApp() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [fidelity, setFidelity] = useState<FidelityLevel>('structural');
   const [sourceFormat, setSourceFormat] = useState('Flowloom');
+
+  const renderedNodes = useMemo(() => {
+    const layerIndex = new Map(layers.map((layer, index) => [layer.id, index]));
+    const layerById = new Map(layers.map((layer) => [layer.id, layer]));
+    return nodes.map((node) => {
+      const layer = layerById.get(node.data.layerId ?? layers[0]?.id);
+      const effectiveLocked = Boolean(node.data.locked || layer?.locked);
+      const hidden = Boolean(node.data.hidden || layer?.visible === false);
+      return {
+        ...node,
+        hidden,
+        draggable: !effectiveLocked,
+        selectable: !effectiveLocked,
+        zIndex: (layerIndex.get(layer?.id ?? '') ?? 0) * 10_000 + (node.zIndex ?? 0),
+        data: effectiveLocked === node.data.locked ? node.data : { ...node.data, locked: effectiveLocked },
+      };
+    });
+  }, [layers, nodes]);
+
+  const renderedEdges = useMemo(() => {
+    const hiddenIds = new Set(renderedNodes.filter((node) => node.hidden).map((node) => node.id));
+    return edges.map((edge) => ({ ...edge, hidden: hiddenIds.has(edge.source) || hiddenIds.has(edge.target) }));
+  }, [edges, renderedNodes]);
 
   const addToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
     const id = createId('toast');
@@ -273,10 +305,10 @@ function EditorApp() {
     if (restoredRef.current) return;
     restoredRef.current = true;
     try {
-      const value = localStorage.getItem(DRAFT_KEY);
+      const value = localStorage.getItem(DRAFT_KEY) ?? localStorage.getItem(LEGACY_DRAFT_KEY);
       if (!value) return;
-      const draft = JSON.parse(value) as DiagramDocument;
-      if (Array.isArray(draft.nodes) && Array.isArray(draft.edges)) {
+      const draft = JSON.parse(value) as DiagramDocument | { title: string; nodes: FlowNode[]; edges: FlowEdge[]; meta?: DiagramDocument['meta'] };
+      if (('pages' in draft && Array.isArray(draft.pages)) || ('nodes' in draft && Array.isArray(draft.nodes) && Array.isArray(draft.edges))) {
         restoreDraft(draft);
         setSourceFormat(draft.meta?.sourceFormat ?? '本地草稿');
         setFidelity(draft.meta?.fidelity ?? 'structural');
@@ -285,6 +317,7 @@ function EditorApp() {
       }
     } catch {
       localStorage.removeItem(DRAFT_KEY);
+      localStorage.removeItem(LEGACY_DRAFT_KEY);
     }
   }, [addToast, flow, restoreDraft]);
 
@@ -293,10 +326,10 @@ function EditorApp() {
     const timer = window.setTimeout(() => {
       const now = new Date().toISOString();
       const documentValue: DiagramDocument = {
-        version: 1,
+        version: 2,
         title,
-        nodes,
-        edges,
+        activePageId,
+        pages,
         meta: { createdAt: now, updatedAt: now, sourceFormat, fidelity },
       };
       try {
@@ -311,7 +344,7 @@ function EditorApp() {
       }
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [addToast, edges, fidelity, markSaved, nodes, sourceFormat, title]);
+  }, [activePageId, addToast, fidelity, markSaved, pages, sourceFormat, title]);
 
   const addShape = useCallback((kind: ShapeKind) => {
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -333,7 +366,8 @@ function EditorApp() {
   };
 
   const applyImport = useCallback((result: ImportResult) => {
-    loadGraph(result.title, result.nodes, result.edges);
+    if (result.pages?.length) loadDocument(result.title, result.pages, result.activePageId);
+    else loadGraph(result.title, result.nodes, result.edges);
     setFidelity(result.fidelity);
     setSourceFormat(result.sourceFormat);
     addToast({
@@ -342,7 +376,7 @@ function EditorApp() {
       detail: result.warnings[0],
     });
     window.setTimeout(() => flow.fitView({ padding: 0.16, duration: 280 }), 80);
-  }, [addToast, flow, loadGraph]);
+  }, [addToast, flow, loadDocument, loadGraph]);
 
   const applyAi = useCallback((nextTitle: string, nextNodes: FlowNode[], nextEdges: FlowEdge[]) => {
     loadGraph(nextTitle, nextNodes, nextEdges);
@@ -364,8 +398,8 @@ function EditorApp() {
       serializeMermaid,
     } = await import('./lib/fileAdapters');
     const serializers = {
-      json: () => serializeDocument(title, nodes, edges),
-      drawio: () => serializeDrawio(title, nodes, edges),
+      json: () => serializeDocument(title, nodes, edges, pages, activePageId),
+      drawio: () => serializeDrawio(title, nodes, edges, pages, activePageId),
       mermaid: () => serializeMermaid(nodes, edges),
       dot: () => serializeDot(title, nodes, edges),
       csv: () => serializeCsv(nodes, edges),
@@ -374,7 +408,7 @@ function EditorApp() {
     const mime = format === 'json' ? 'application/json;charset=utf-8' : format === 'drawio' ? 'application/xml;charset=utf-8' : 'text/plain;charset=utf-8';
     downloadText(fileName(extensions[format]), serializers[format](), mime);
     addToast({ tone: 'success', title: `已导出 ${extensions[format]}` });
-  }, [addToast, edges, fileName, nodes, title]);
+  }, [activePageId, addToast, edges, fileName, nodes, pages, title]);
 
   const exportImage = useCallback(async (format: 'svg' | 'png' | 'pdf') => {
     if (nodes.length === 0) {
@@ -478,9 +512,11 @@ function EditorApp() {
     { id: 'undo', label: '撤销', group: '编辑', shortcut: 'Ctrl Z', run: undo },
     { id: 'redo', label: '重做', group: '编辑', shortcut: 'Ctrl Y', run: redo },
     { id: 'duplicate', label: '复制所选图形', group: '编辑', shortcut: 'Ctrl D', run: duplicateSelection },
+    { id: 'group', label: '分组所选图形', group: '编辑', shortcut: 'Ctrl G', keywords: 'group container', run: groupSelection },
+    { id: 'ungroup', label: '取消分组', group: '编辑', shortcut: 'Ctrl Shift G', keywords: 'ungroup', run: ungroupSelection },
     { id: 'fit', label: '适合全部内容', group: '视图', shortcut: 'F', run: () => flow.fitView({ padding: 0.16, duration: 260 }) },
     { id: 'theme', label: theme === 'light' ? '切换到深色模式' : '切换到浅色模式', group: '视图', run: () => setTheme((value) => value === 'light' ? 'dark' : 'light') },
-  ], [addShape, duplicateSelection, exportText, flow, redo, startNewDocument, theme, undo]);
+  ], [addShape, duplicateSelection, exportText, flow, groupSelection, redo, startNewDocument, theme, undo, ungroupSelection]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -493,6 +529,7 @@ function EditorApp() {
       if (modifier && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); }
       else if (modifier && event.key.toLowerCase() === 'y') { event.preventDefault(); redo(); }
       else if (modifier && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelection(); }
+      else if (modifier && event.key.toLowerCase() === 'g') { event.preventDefault(); event.shiftKey ? ungroupSelection() : groupSelection(); }
       else if (modifier && event.key.toLowerCase() === 'a') { event.preventDefault(); selectAll(); }
       else if (modifier && event.key.toLowerCase() === 'c') { event.preventDefault(); void copySelection(); }
       else if (modifier && event.key.toLowerCase() === 'v') { event.preventDefault(); void pasteSelection(); }
@@ -500,13 +537,21 @@ function EditorApp() {
       else if (modifier && event.key.toLowerCase() === 'o') { event.preventDefault(); setImportOpen(true); }
       else if (modifier && event.key.toLowerCase() === 'n') { event.preventDefault(); startNewDocument(); }
       else if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelection(); }
+      else if (!modifier && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+        event.preventDefault();
+        const step = event.shiftKey ? 10 : 1;
+        nudgeSelection({
+          x: event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0,
+          y: event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0,
+        });
+      }
       else if (event.key.toLowerCase() === 'f') flow.fitView({ padding: 0.16, duration: 260 });
       else if (event.key === '1') setTool('select');
       else if (event.key === '2') setTool('pan');
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [copySelection, deleteSelection, duplicateSelection, exportText, flow, pasteSelection, redo, selectAll, startNewDocument, undo]);
+  }, [copySelection, deleteSelection, duplicateSelection, exportText, flow, groupSelection, nudgeSelection, pasteSelection, redo, selectAll, startNewDocument, undo, ungroupSelection]);
 
   const savedLabel = dirty
     ? '保存中…'
@@ -528,7 +573,14 @@ function EditorApp() {
           <span className="topbar__divider" />
           <IconButton label={leftOpen ? '收起图形库' : '展开图形库'} icon={leftOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />} onClick={toggleLibrary} />
           <div className="document-title">
-            <input value={title} onChange={(event) => setTitle(event.target.value)} aria-label="流程图标题" spellCheck={false} />
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              onFocus={beginTransaction}
+              onBlur={endTransaction}
+              aria-label="流程图标题"
+              spellCheck={false}
+            />
             <span className={dirty ? 'is-dirty' : ''}><Save size={12} />{savedLabel}</span>
           </div>
         </div>
@@ -564,8 +616,8 @@ function EditorApp() {
         onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }}
       >
         <ReactFlow<FlowNode, FlowEdge>
-          nodes={nodes}
-          edges={edges}
+          nodes={renderedNodes}
+          edges={renderedEdges}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
@@ -624,11 +676,15 @@ function EditorApp() {
 
       <Inspector open={rightOpen} nodes={nodes} edges={edges} onOpenAi={() => setAiOpen(true)} />
 
+      <PageBar onPageChange={() => flow.fitView({ padding: 0.16, duration: 220 })} />
+
       <footer className="statusbar">
         <span className={`fidelity-status fidelity-status--${fidelity}`}><Check size={12} />{fidelity === 'structural' ? '结构保真' : fidelity === 'hybrid' ? '混合保真' : '视觉保真'}</span>
         <span>{sourceFormat}</span>
         <span>{nodes.length} 节点</span>
         <span>{edges.length} 连线</span>
+        <span>{pages.length} 页面</span>
+        <span>{layers.length} 图层</span>
         <span className="statusbar__spacer" />
         <span>本地优先</span>
       </footer>

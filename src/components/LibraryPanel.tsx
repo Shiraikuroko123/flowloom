@@ -13,6 +13,8 @@ const categoryOrder: Exclude<ShapeCategory, 'internal'>[] = [
   'flowchart',
   'bpmn',
   'uml',
+  'erd',
+  'architecture',
   'basic',
   'container',
 ];
