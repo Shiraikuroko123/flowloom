@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type { ScientificSchematicOptions } from '../types';
 import { estimateSvgTextWidth } from './diagram';
 import {
@@ -26,6 +27,21 @@ function options(overrides: Partial<ScientificSchematicOptions> = {}): Scientifi
   return { ...DEFAULT_SCIENTIFIC_SCHEMATIC_OPTIONS, ...overrides };
 }
 
+function hasDirectedPath(edges: Array<{ source: string; target: string }>, source: string, target: string): boolean {
+  const outgoing = new Map<string, string[]>();
+  for (const edge of edges) outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target]);
+  const queue = [source];
+  const visited = new Set<string>();
+  while (queue.length) {
+    const current = queue.shift()!;
+    if (current === target) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    queue.push(...(outgoing.get(current) ?? []));
+  }
+  return false;
+}
+
 describe('scientific schematic templates', () => {
   it('builds every research-paper template as a connected editable graph', () => {
     for (const template of SCIENTIFIC_SCHEMATIC_TEMPLATES) {
@@ -45,10 +61,26 @@ describe('scientific schematic templates', () => {
   });
 
   it('ships an evidence-backed drawing recipe for every schematic template', () => {
+    const corpus = JSON.parse(readFileSync('docs/research/arxiv-figure-corpus.json', 'utf8')) as {
+      domains: {
+        llm: { summary: { representativeComposition: Record<string, number> } };
+        embodied: { summary: { representativeComposition: Record<string, number>; representativeElements: Record<string, number> } };
+      };
+    };
     expect(ARXIV_FIGURE_CORPUS_SUMMARY.paperCount).toBe(100);
     expect(ARXIV_FIGURE_CORPUS_SUMMARY.parsedFigureCount).toBe(1289);
     expect(ARXIV_FIGURE_CORPUS_SUMMARY.llmFigureCount).toBe(656);
     expect(ARXIV_FIGURE_CORPUS_SUMMARY.embodiedFigureCount).toBe(633);
+    expect(ARXIV_FIGURE_CORPUS_SUMMARY.representativePatterns.llm.trainingPipeline)
+      .toBe(corpus.domains.llm.summary.representativeComposition['training-pipeline']);
+    expect(ARXIV_FIGURE_CORPUS_SUMMARY.representativePatterns.embodied.trainingPipeline)
+      .toBe(corpus.domains.embodied.summary.representativeComposition['training-pipeline']);
+    expect(ARXIV_FIGURE_CORPUS_SUMMARY.representativePatterns.embodied.robotEmbodiment)
+      .toBe(corpus.domains.embodied.summary.representativeElements['robot-embodiment']);
+    expect(ARXIV_FIGURE_CORPUS_SUMMARY.representativePatterns.embodied.actionTrajectory)
+      .toBe(corpus.domains.embodied.summary.representativeElements['action-trajectory']);
+    expect(ARXIV_FIGURE_CORPUS_SUMMARY.representativePatterns.embodied.imageStrip)
+      .toBe(corpus.domains.embodied.summary.representativeElements['image-strip']);
 
     for (const template of SCIENTIFIC_SCHEMATIC_TEMPLATES) {
       const recipe = SCIENTIFIC_FIGURE_RECIPES[template.id];
@@ -224,10 +256,76 @@ describe('scientific schematic templates', () => {
         }));
         const blockers = auditScientificFigure([...layout.nodes, ...positioned], format.spec, schematic.edges)
           .filter((issue) => issue.severity === 'error');
-        expect(blockers, `${templateId}:${format.expected}`).toEqual([]);
+        const blockerDetails = blockers.map((issue) => ({
+          ...issue,
+          edges: issue.edgeIds?.map((id) => {
+            const edge = schematic.edges.find((candidate) => candidate.id === id);
+            const source = edge ? schematic.nodes.find((node) => node.id === edge.source) : undefined;
+            const target = edge ? schematic.nodes.find((node) => node.id === edge.target) : undefined;
+            return edge
+              ? `${edge.source}[${edge.sourceHandle ?? 'auto'}] ${source?.position.y}+${source?.style?.height}->${edge.target}[${edge.targetHandle ?? 'auto'}] ${target?.position.y}+${target?.style?.height} (${edge.data?.routing ?? 'smart'})`
+              : id;
+          }),
+        }));
+        expect(blockerDetails, `${templateId}:${format.expected}`).toEqual([]);
       }
     }
     expect(splitLabelWords, 'scientific labels must wrap only between complete words').toEqual([]);
+  });
+
+  it('preserves the scientific dependency contract in every flagship layout', () => {
+    const formats: ScientificFigureSpec[] = [
+      { widthMm: 89, heightMm: 70, dpi: 300, rows: 1, columns: 1, marginMm: 6, gapMm: 0, panelLabels: false, labelStyle: 'uppercase', background: '#ffffff', updatedAt: '2026-07-29T00:00:00.000Z' },
+      { widthMm: 180, heightMm: 120, dpi: 300, rows: 1, columns: 1, marginMm: 6, gapMm: 0, panelLabels: false, labelStyle: 'uppercase', background: '#ffffff', updatedAt: '2026-07-29T00:00:00.000Z' },
+      { widthMm: 180, heightMm: 101.25, dpi: 300, rows: 1, columns: 1, marginMm: 6, gapMm: 0, panelLabels: false, labelStyle: 'uppercase', background: '#ffffff', updatedAt: '2026-07-29T00:00:00.000Z' },
+    ];
+
+    for (const figure of formats) {
+      const vla = createScientificSchematic(options({ templateId: 'vla-policy', density: 'detailed' }), figure);
+      const vlaIds = new Set(vla.nodes.map((node) => node.id));
+      for (const id of ['vla-state', 'vla-fusion', 'vla-action-expert', 'vla-decision', 'vla-action-chunk', 'vla-controller', 'vla-reobserve']) {
+        expect(vlaIds.has(id), `${vla.layout}:${id}`).toBe(true);
+      }
+      expect(hasDirectedPath(vla.edges, 'vla-state', 'vla-action-expert'), `${vla.layout}:state-to-policy`).toBe(true);
+      expect(hasDirectedPath(vla.edges, 'vla-action-expert', 'vla-decision'), `${vla.layout}:expert-to-risk`).toBe(true);
+      expect(hasDirectedPath(vla.edges, 'vla-decision', 'vla-controller'), `${vla.layout}:risk-to-controller`).toBe(true);
+      expect(hasDirectedPath(vla.edges, 'vla-reobserve', 'vla-camera-front'), `${vla.layout}:closed-loop`).toBe(true);
+
+      const world = createScientificSchematic(options({ templateId: 'world-model-rollout', density: 'detailed' }), figure);
+      const worldIds = new Set(world.nodes.map((node) => node.id));
+      for (const id of ['wm-voxel', 'wm-model', 'wm-rollout-a', 'wm-rollout-b', 'wm-rollout-c', 'wm-decision', 'wm-action', 'wm-reobserve', 'wm-error']) {
+        expect(worldIds.has(id), `${world.layout}:${id}`).toBe(true);
+      }
+      expect(hasDirectedPath(world.edges, 'wm-voxel', 'wm-model'), `${world.layout}:state-to-model`).toBe(true);
+      for (const id of ['wm-rollout-a', 'wm-rollout-b', 'wm-rollout-c']) {
+        expect(hasDirectedPath(world.edges, 'wm-model', id), `${world.layout}:model-to-${id}`).toBe(true);
+      }
+      const rolloutText = ['wm-rollout-a', 'wm-rollout-b', 'wm-rollout-c'].map((id) => {
+        const node = world.nodes.find((candidate) => candidate.id === id)!;
+        return `${node.data.label} ${node.data.description ?? ''}`.toLowerCase();
+      });
+      expect(rolloutText[0], `${world.layout}:success-copy`).toMatch(/goal|success/);
+      expect(rolloutText[1], `${world.layout}:collision-copy`).toMatch(/collision|contact/);
+      expect(rolloutText[2], `${world.layout}:occlusion-copy`).toMatch(/occlud|uncertain/);
+
+      const llm = createScientificSchematic(options({ templateId: 'llm-training-pipeline', density: 'detailed' }), figure);
+      const llmIds = new Set(llm.nodes.map((node) => node.id));
+      for (const id of ['lt-instruction-data', 'lt-sft-objective', 'lt-sft-model', 'lt-preference-data', 'lt-dpo-objective', 'lt-rlhf-objective', 'lt-deploy-model', 'lt-release-gate']) {
+        expect(llmIds.has(id), `${llm.layout}:${id}`).toBe(true);
+      }
+      expect(hasDirectedPath(llm.edges, 'lt-instruction-data', 'lt-sft-model'), `${llm.layout}:instructions-to-sft`).toBe(true);
+      expect(hasDirectedPath(llm.edges, 'lt-sft-objective', 'lt-sft-model'), `${llm.layout}:objective-to-sft`).toBe(true);
+      expect(hasDirectedPath(llm.edges, 'lt-preference-data', 'lt-dpo-objective'), `${llm.layout}:prefs-to-dpo`).toBe(true);
+      expect(hasDirectedPath(llm.edges, 'lt-preference-data', 'lt-rlhf-objective'), `${llm.layout}:prefs-to-rlhf`).toBe(true);
+      expect(hasDirectedPath(llm.edges, 'lt-sft-model', 'lt-dpo-objective'), `${llm.layout}:reference-to-dpo`).toBe(true);
+      expect(hasDirectedPath(llm.edges, 'lt-sft-model', 'lt-rlhf-objective'), `${llm.layout}:reference-to-rlhf`).toBe(true);
+
+      for (const schematic of [vla, world, llm]) {
+        const visibleText = schematic.nodes.map((node) => `${node.data.label} ${node.data.description ?? ''}`).join('\n');
+        expect(visibleText, `${schematic.templateId}:${schematic.layout}:math-typography`)
+          .not.toMatch(/theta_|r_phi|L_NLL|z_hat|L_pred|\bbeta\b/);
+      }
+    }
   });
 
   it('exports phase backgrounds before edges and foreground modules', () => {
@@ -401,8 +499,8 @@ describe('scientific schematic templates', () => {
     expect(dpoCheckpoint.left - dpo.right).toBeGreaterThanOrEqual(12);
     expect(rlhfCheckpoint.left - rlhf.right).toBeGreaterThanOrEqual(12);
     expect(rlhf.top - dpo.bottom).toBeGreaterThanOrEqual(10);
-    expect(single.nodes.find((node) => node.id === 'lt-dpo-checkpoint')?.data.label).toBe('DPO θ_D');
-    expect(single.nodes.find((node) => node.id === 'lt-rlhf-checkpoint')?.data.label).toBe('RL θ_RL');
+    expect(single.nodes.find((node) => node.id === 'lt-dpo-checkpoint')?.data.label).toBe('DPO\nckpt');
+    expect(single.nodes.find((node) => node.id === 'lt-rlhf-checkpoint')?.data.label).toBe('RL\nckpt');
 
     const vlaPhases = double.nodes.filter((node) => node.data.schematicRole === 'phase');
     expect(new Set(vlaPhases.map((node) => node.data.fontSize)).size).toBe(1);
@@ -459,6 +557,7 @@ describe('scientific schematic templates', () => {
             expect(edge.data?.routing, `${context}:${edge.id}:routing`).toBe(original?.data?.routing);
             expect(edge.data?.scientificSemantic, `${context}:${edge.id}:semantic`).toBe(original?.data?.scientificSemantic);
             expect(edge.data?.routeSide, `${context}:${edge.id}:route-side`).toBe(original?.data?.routeSide);
+            expect(edge.data?.routeWaypoints, `${context}:${edge.id}:route-waypoints`).toEqual(original?.data?.routeWaypoints);
           }
         }
       }

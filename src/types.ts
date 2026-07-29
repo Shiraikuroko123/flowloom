@@ -345,6 +345,12 @@ export interface FlowNodeData extends Record<string, unknown> {
   locked?: boolean;
 }
 
+export interface ScientificRouteWaypoint {
+  origin: 'source' | 'target';
+  dx: number;
+  dy: number;
+}
+
 export interface FlowEdgeData extends Record<string, unknown> {
   label?: string;
   color: string;
@@ -356,6 +362,7 @@ export interface FlowEdgeData extends Record<string, unknown> {
   scientificSemantic?: ScientificConnectorSemantic;
   routeSide?: ScientificRouteSide;
   routeOffset?: number;
+  routeWaypoints?: ScientificRouteWaypoint[];
   labelFontSize?: number;
 }
 

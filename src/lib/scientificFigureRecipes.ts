@@ -28,6 +28,17 @@ export const ARXIV_FIGURE_CORPUS_SUMMARY = {
   parsedFigureCount: 1289,
   llmFigureCount: 656,
   embodiedFigureCount: 633,
+  representativePatterns: {
+    llm: {
+      trainingPipeline: 19,
+    },
+    embodied: {
+      robotEmbodiment: 48,
+      actionTrajectory: 38,
+      imageStrip: 29,
+      trainingPipeline: 20,
+    },
+  },
   generatedAt: '2026-07-28',
 } as const;
 
@@ -97,7 +108,7 @@ export const SCIENTIFIC_FIGURE_RECIPES: Record<ScientificSchematicTemplateId, Sc
   'vla-policy': recipe({
     templateId: 'vla-policy',
     family: 'embodied',
-    evidence: '具身样本中 43/50 出现机器人机体、33/50 出现动作轨迹、33/50 出现图像条带。',
+    evidence: `具身样本中 ${ARXIV_FIGURE_CORPUS_SUMMARY.representativePatterns.embodied.robotEmbodiment}/50 出现机器人机体、${ARXIV_FIGURE_CORPUS_SUMMARY.representativePatterns.embodied.actionTrajectory}/50 出现动作轨迹、${ARXIV_FIGURE_CORPUS_SUMMARY.representativePatterns.embodied.imageStrip}/50 出现图像条带。`,
     aspectRatio: '约 2.2:1 横向，观察/模型/动作/环境四段',
     readingOrder: '多相机观察与指令 → VLM 主干 → 动作专家/动作块 → 机器人 → 新观察回环。',
     zones: ['观察与编码', '共享 VLM', '动作生成', '机器人环境', '底部闭环'],
@@ -174,7 +185,7 @@ export const SCIENTIFIC_FIGURE_RECIPES: Record<ScientificSchematicTemplateId, Sc
   'train-deploy': recipe({
     templateId: 'train-deploy',
     family: 'cross-domain',
-    evidence: 'LLM 24/50、具身 18/50 的代表图包含训练流程；数据混合和在线部署经常同图出现。',
+    evidence: `LLM ${ARXIV_FIGURE_CORPUS_SUMMARY.representativePatterns.llm.trainingPipeline}/50、具身 ${ARXIV_FIGURE_CORPUS_SUMMARY.representativePatterns.embodied.trainingPipeline}/50 的代表图包含训练流程；数据混合和在线部署经常同图出现。`,
     aspectRatio: '约 2:1 横向，训练区约占 60%，部署区约占 40%',
     readingOrder: '多源数据 → 预训练/适配 → checkpoint 分界 → 在线模型 → 动作与回流。',
     zones: ['离线数据', '训练阶段', '模型检查点', '在线部署', '失败回流'],
@@ -199,7 +210,7 @@ export const SCIENTIFIC_FIGURE_RECIPES: Record<ScientificSchematicTemplateId, Sc
   'llm-training-pipeline': recipe({
     templateId: 'llm-training-pipeline',
     family: 'llm',
-    evidence: '训练流程是 LLM 代表图最高频构图（24/50），常分预训练、SFT、偏好对齐和评测四段。',
+    evidence: `训练流程是 LLM 代表图的高频构图（${ARXIV_FIGURE_CORPUS_SUMMARY.representativePatterns.llm.trainingPipeline}/50），常分预训练、SFT、偏好对齐和评测四段。`,
     aspectRatio: '约 2.4:1 横向，四阶段泳道',
     readingOrder: '语料 → 预训练 → 指令微调 → 偏好对齐 → 评测/部署；每阶段下方附数据和目标。',
     zones: ['语料策展', '预训练', '监督微调', '偏好对齐', '评测/部署'],

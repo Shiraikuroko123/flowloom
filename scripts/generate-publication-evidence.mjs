@@ -13,6 +13,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputRoot = path.join(root, 'output', 'publication-evidence');
 const generatedAt = new Date().toISOString();
 const sourceFiles = [
+  'src/types.ts',
+  'src/lib/flagshipQuality.ts',
   'src/lib/scientificSchematics.ts',
   'src/lib/scientific.ts',
   'src/lib/scientificEvidence.ts',
@@ -382,7 +384,13 @@ function baseMarkdownReport(manifest) {
   const rows = manifest.artifacts.map((item) => (
     `| ${item.templateId} | ${item.format} | ${item.style} | ${item.nodeCount}/${item.edgeCount} | ${item.minimumFontPt.toFixed(2)} | ${item.minimumStrokePt.toFixed(2)} | ${item.audit.error}/${item.audit.warning}/${item.audit.info} | ${item.pdfFonts.allEmbedded ? 'yes' : 'no'} |`
   )).join('\n');
-  return `# Flowloom Publication Evidence\n\nGenerated: ${manifest.generatedAt}\n\nThis bundle is generated from the current source tree. Automated checks establish export readiness; they do not certify scientific claims or venue acceptance.\n\n## Coverage\n\n- 3 flagship figures\n- 3 physical layouts: 89 x 70 mm, 180 x 120 mm, 180 x 101.25 mm\n- conference color and monochrome\n- editable SVG, vector PDF, and 300 DPI PNG\n- grayscale plus protanopia, deuteranopia, and tritanopia review simulations\n- every PDF rerendered at 300 DPI with Poppler\n- editor preview geometry measured at 1920 x 1200, 1920 x 1080, and 1366 x 768\n- preview phase wrapping compared line-for-line with exported SVG\n\n## Gate\n\n- Audit errors: **${manifest.summary.auditErrors}**\n- Raster failures: **${manifest.summary.rasterFailures}**\n- PDFs with unembedded fonts: **${manifest.summary.pdfFontFailures}**\n- Preview geometry failures: **${manifest.summary.previewLayoutFailures}**\n- Preview geometry checks: **${manifest.summary.previewLayoutChecks}**\n- Core artifacts: **${manifest.summary.coreArtifactFiles}**\n- Accessibility simulations: **${manifest.summary.accessibilityFiles}**\n- Poppler renders: **${manifest.summary.pdfRenderFiles}**\n\n| Figure | Layout | Style | Nodes/edges | Min font pt | Min stroke pt | Audit E/W/I | PDF fonts embedded |\n| --- | --- | --- | ---: | ---: | ---: | ---: | --- |\n${rows}\n\n## Contact Sheets\n\n- \`contact-sheets/core-exports.jpg\`\n- \`contact-sheets/accessibility-simulations.jpg\`\n- \`contact-sheets/pdf-poppler-renders.jpg\`\n\nAll file hashes and source fingerprints are in \`manifest.json\`. CVD outputs are review simulations, not clinical vision models.\n`;
+  const flagshipRows = manifest.flagships.map((item) => (
+    `| ${item.templateId} | ${item.totalScore.toFixed(1)} | ${item.minimumDimensionScore.toFixed(1)} | ${item.variantCount}/${item.expectedVariantCount} | ${item.failureReasons.length ? item.failureReasons.join('; ') : 'none'} |`
+  )).join('\n');
+  const dimensionSections = manifest.flagships.map((item) => (
+    `### ${item.name}\n\n${item.dimensions.map((dimension) => `- ${dimension.label}: **${dimension.score.toFixed(1)} / 10** — ${dimension.evidence}`).join('\n')}`
+  )).join('\n\n');
+  return `# Flowloom Publication Evidence\n\nGenerated: ${manifest.generatedAt}\n\nThis bundle is generated from the current source tree. Automated checks establish export readiness; they do not certify scientific claims or venue acceptance.\n\n## Coverage\n\n- 3 flagship figures\n- 3 physical layouts: 89 x 70 mm, 180 x 120 mm, 180 x 101.25 mm\n- conference color and monochrome\n- editable SVG, vector PDF, and 300 DPI PNG\n- grayscale plus protanopia, deuteranopia, and tritanopia review simulations\n- every PDF rerendered at 300 DPI with Poppler\n- editor preview geometry measured at 1920 x 1200, 1920 x 1080, and 1366 x 768\n- preview phase wrapping compared line-for-line with exported SVG\n\n## Gate\n\n- Minimum flagship score: **${manifest.summary.minimumFlagshipScore.toFixed(1)} / 100**\n- Flagships below gate or with evidence failures: **${manifest.summary.flagshipFailures}**\n- Audit errors: **${manifest.summary.auditErrors}**\n- Raster failures: **${manifest.summary.rasterFailures}**\n- PDFs with unembedded fonts: **${manifest.summary.pdfFontFailures}**\n- Preview geometry failures: **${manifest.summary.previewLayoutFailures}**\n- Preview geometry checks: **${manifest.summary.previewLayoutChecks}**\n- Core artifacts: **${manifest.summary.coreArtifactFiles}**\n- Accessibility simulations: **${manifest.summary.accessibilityFiles}**\n- Poppler renders: **${manifest.summary.pdfRenderFiles}**\n\n| Flagship | Score / 100 | Lowest dimension / 10 | Variants | Failure reasons |\n| --- | ---: | ---: | ---: | --- |\n${flagshipRows}\n\n## Dimension Scorecards\n\n${dimensionSections}\n\n## Export Variants\n\n| Figure | Layout | Style | Nodes/edges | Min font pt | Min stroke pt | Audit E/W/I | PDF fonts embedded |\n| --- | --- | --- | ---: | ---: | ---: | ---: | --- |\n${rows}\n\n## Contact Sheets\n\n- \`contact-sheets/core-exports.jpg\`\n- \`contact-sheets/accessibility-simulations.jpg\`\n- \`contact-sheets/pdf-poppler-renders.jpg\`\n\nAll file hashes and source fingerprints are in \`manifest.json\`. CVD outputs are review simulations, not clinical vision models.\n`;
 }
 
 function markdownReport(manifest) {
@@ -407,6 +415,15 @@ async function main() {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1920, height: 1200 }, deviceScaleFactor: 1 });
     await page.goto(server.url, { waitUntil: 'networkidle' });
+    const qualityGate = await page.evaluate(async () => {
+      const module = await import('/src/lib/flagshipQuality.ts');
+      return {
+        threshold: module.FLAGSHIP_QUALITY_THRESHOLD,
+        minimumDimensionScore: module.FLAGSHIP_MINIMUM_DIMENSION_SCORE,
+        rubricVersion: module.FLAGSHIP_QUALITY_RUBRIC_VERSION,
+        scorecards: module.FLAGSHIP_QUALITY_SCORECARDS,
+      };
+    });
     const artifacts = [];
     const presentationSvgs = new Map();
     for (const template of templates) {
@@ -434,6 +451,7 @@ async function main() {
             return counts;
           }, { error: 0, warning: 0, info: 0 });
           artifacts.push({
+            stem,
             templateId: template.id,
             format: format.id,
             style,
@@ -487,6 +505,79 @@ async function main() {
     if (!python) throw new Error('Python with Pillow and NumPy is required for accessibility simulations.');
     run(python, [path.join(root, 'scripts', 'create-accessibility-variants.py'), outputRoot], { stdio: 'inherit' });
     const rasterValidation = JSON.parse(await readFile(path.join(outputRoot, 'raster-validation.json'), 'utf8'));
+    const expectedVariantCount = formats.length * styles.length;
+    const visualEquivalence = Array.isArray(rasterValidation.visualEquivalence)
+      ? rasterValidation.visualEquivalence
+      : [];
+    const rasterFailureRecords = Array.isArray(rasterValidation.failures)
+      ? rasterValidation.failures
+      : [];
+    const flagships = templates.map((template) => {
+      const scorecard = qualityGate.scorecards[template.id];
+      if (!scorecard) throw new Error(`Missing flagship scorecard for ${template.id}.`);
+      const templateArtifacts = artifacts.filter((artifact) => artifact.templateId === template.id);
+      const templatePreviewChecks = previewLayoutValidation.filter((item) => item.templateId === template.id);
+      const failureReasons = [];
+      if (templateArtifacts.length !== expectedVariantCount) {
+        failureReasons.push(`expected ${expectedVariantCount} export variants, received ${templateArtifacts.length}`);
+      }
+      if (scorecard.totalScore < qualityGate.threshold) {
+        failureReasons.push(`score ${scorecard.totalScore.toFixed(1)} is below ${qualityGate.threshold}`);
+      }
+      if (scorecard.minimumDimensionScore < qualityGate.minimumDimensionScore) {
+        failureReasons.push(`lowest dimension ${scorecard.minimumDimensionScore.toFixed(1)} is below ${qualityGate.minimumDimensionScore}`);
+      }
+      const variants = templateArtifacts.map((artifact) => {
+        const raster = visualEquivalence.find((item) => item.stem === artifact.stem);
+        const failures = [];
+        if (artifact.audit.error) failures.push(`${artifact.audit.error} audit error(s)`);
+        if (!artifact.pdfFonts.allEmbedded) failures.push('PDF font embedding failed');
+        if (!raster) failures.push('PNG/PDF visual-equivalence result missing');
+        else if (!raster.passed) failures.push(`PNG/PDF mismatch: ${raster.failures.join(', ') || 'unspecified'}`);
+        if (failures.length) failureReasons.push(`${artifact.format}/${artifact.style}: ${failures.join(', ')}`);
+        return {
+          format: artifact.format,
+          style: artifact.style,
+          minimumFontPt: artifact.minimumFontPt,
+          minimumAnnotationFontPt: artifact.minimumAnnotationFontPt,
+          minimumStrokePt: artifact.minimumStrokePt,
+          audit: artifact.audit,
+          pdfFontsEmbedded: artifact.pdfFonts.allEmbedded,
+          rasterPassed: raster?.passed ?? false,
+          failures,
+        };
+      });
+      for (const preview of templatePreviewChecks) {
+        if (preview.failures.length) {
+          failureReasons.push(`${preview.viewport.id} preview: ${preview.failures.map((failure) => failure.code).join(', ')}`);
+        }
+      }
+      for (const failure of rasterFailureRecords) {
+        const serialized = JSON.stringify(failure);
+        if (serialized.includes(template.id) || serialized.includes(template.slug)) {
+          failureReasons.push(`raster validation: ${serialized}`);
+        }
+      }
+      const uniqueFailures = [...new Set(failureReasons)];
+      return {
+        templateId: template.id,
+        name: scorecard.name,
+        rubricVersion: scorecard.rubricVersion,
+        reviewedAt: scorecard.reviewedAt,
+        scope: scorecard.scope,
+        threshold: scorecard.threshold,
+        totalScore: scorecard.totalScore,
+        minimumDimensionScore: scorecard.minimumDimensionScore,
+        dimensions: scorecard.dimensions,
+        expectedVariantCount,
+        variantCount: templateArtifacts.length,
+        variants,
+        previewCheckCount: templatePreviewChecks.reduce((sum, item) => sum + item.checkCount, 0),
+        previewFailureCount: templatePreviewChecks.reduce((sum, item) => sum + item.failures.length, 0),
+        failureReasons: uniqueFailures,
+        passed: scorecard.passed && uniqueFailures.length === 0,
+      };
+    });
     const sourceHashes = Object.fromEntries(await Promise.all(sourceFiles.map(async (file) => [file, await sha256(path.join(root, file))])));
     const artifactFiles = (await walkFiles(outputRoot)).filter((file) => !file.endsWith('manifest.json') && !file.endsWith('REPORT.md'));
     const hashes = Object.fromEntries(await Promise.all(artifactFiles.map(async (file) => [
@@ -496,7 +587,7 @@ async function main() {
     const gitCommit = run('git', ['rev-parse', 'HEAD']).trim();
     const gitStatus = run('git', ['status', '--short']).trim();
     const manifest = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       generatedAt,
       source: {
         gitCommit,
@@ -510,18 +601,22 @@ async function main() {
         corpus: 'docs/research/arxiv-figure-corpus.json',
       },
       acceptanceGate: {
-        reviewerScore: 95,
-        minimumDimensionScore: 9,
+        reviewerScore: qualityGate.threshold,
+        minimumDimensionScore: qualityGate.minimumDimensionScore,
+        rubricVersion: qualityGate.rubricVersion,
         critical: 0,
         previewThresholds,
         disclaimer: 'Export readiness is not venue acceptance or scientific validation.',
       },
+      flagships,
       artifacts,
       previewScreenshots,
       previewLayoutValidation,
       rasterValidation,
       hashes,
       summary: {
+        minimumFlagshipScore: Math.min(...flagships.map((item) => item.totalScore)),
+        flagshipFailures: flagships.filter((item) => !item.passed).length,
         auditErrors: artifacts.reduce((sum, item) => sum + item.audit.error, 0),
         auditWarnings: artifacts.reduce((sum, item) => sum + item.audit.warning, 0),
         rasterFailures: rasterValidation.failures.length,
@@ -538,7 +633,9 @@ async function main() {
     await writeFile(path.join(outputRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
     await writeFile(path.join(outputRoot, 'REPORT.md'), markdownReport(manifest), 'utf8');
     if (
-      manifest.summary.auditErrors
+      manifest.summary.flagshipFailures
+      || manifest.summary.minimumFlagshipScore < manifest.acceptanceGate.reviewerScore
+      || manifest.summary.auditErrors
       || manifest.summary.rasterFailures
       || manifest.summary.pdfFontFailures
       || manifest.summary.previewLayoutFailures

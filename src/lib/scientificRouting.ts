@@ -143,6 +143,21 @@ export function routeScientificEdge(
   target: ScientificRoutePoint,
 ): ScientificEdgeRoute {
   const midpoint = { x: (source.x + target.x) / 2, y: (source.y + target.y) / 2 };
+  const configuredWaypoints = edge.data?.routeWaypoints;
+  if (Array.isArray(configuredWaypoints) && configuredWaypoints.length) {
+    const waypoints = configuredWaypoints.flatMap((waypoint) => {
+      if (!waypoint || (waypoint.origin !== 'source' && waypoint.origin !== 'target')) return [];
+      const dx = Number(waypoint.dx);
+      const dy = Number(waypoint.dy);
+      if (!Number.isFinite(dx) || !Number.isFinite(dy)) return [];
+      const origin = waypoint.origin === 'source' ? source : target;
+      return [{ x: origin.x + dx, y: origin.y + dy }];
+    });
+    if (waypoints.length) {
+      const points = [source, ...waypoints, target];
+      return { path: roundedOrthogonalPath(points), label: midpoint, points };
+    }
+  }
   if (isFeedbackEdge(edge)) {
     const side = edge.data?.routeSide ?? (target.x <= source.x ? 'bottom-left' : 'bottom-right');
     const offset = Math.max(12, Number(edge.data?.routeOffset ?? 36));

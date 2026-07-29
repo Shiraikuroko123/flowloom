@@ -505,6 +505,24 @@
 .scientific-segmented button.is-active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 
 .scientific-schematic-preview { min-width: 0; }
+.flagship-quality-strip {
+  display: grid;
+  min-height: 46px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 7px var(--space-4);
+  border-block-end: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted-strong);
+}
+
+.flagship-quality-strip > span { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.flagship-quality-strip strong { color: var(--ink); font-size: 0.6875rem; font-variant-numeric: tabular-nums; }
+.flagship-quality-strip small { overflow: hidden; color: var(--muted-strong); font-size: 0.59375rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.flagship-quality-strip--audited svg { color: var(--success); }
+.flagship-quality-strip--requires-review { background: var(--warning-soft); }
+.flagship-quality-strip--requires-review svg { color: var(--warning); }
 .schematic-preview-stage { display: grid; min-height: 0; flex: 1; place-items: center; padding: 18px; overflow: hidden; background: #ffffff; }
 .schematic-svg-preview { display: block; width: 100%; height: auto; max-width: 100%; max-height: 100%; font-family: "Segoe UI", "Microsoft YaHei UI", Arial, sans-serif; }
 
@@ -620,6 +638,7 @@
   .schematic-recipe-rules { grid-template-columns: minmax(0, 1fr); }
   .schematic-reference-strip { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .scientific-preview-pane { min-height: 360px; }
+  .flagship-quality-strip small { overflow: visible; text-overflow: clip; white-space: normal; }
   .scientific-quality-workspace { display: flex; flex-direction: column; }
   .quality-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-inline-end: 0; border-block-end: 1px solid var(--border); }
   .quality-summary > div { flex-direction: column; align-items: center; justify-content: center; gap: 0; }

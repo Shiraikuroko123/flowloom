@@ -49,6 +49,7 @@ import {
   ARXIV_FIGURE_CORPUS_SUMMARY,
   getScientificFigureRecipe,
 } from '../lib/scientificFigureRecipes';
+import { assessFlagshipQualityScope } from '../lib/flagshipQuality';
 import { IconButton } from './IconButton';
 import { ShapeVisual } from './ShapeVisual';
 import { routeScientificEdge, scientificConnectionPoint } from '../lib/scientificRouting';
@@ -567,6 +568,7 @@ function SchematicEditor({
 }) {
   const selectedTemplate = SCIENTIFIC_SCHEMATIC_TEMPLATES.find((template) => template.id === options.templateId) ?? SCIENTIFIC_SCHEMATIC_TEMPLATES[0];
   const figureRecipe = getScientificFigureRecipe(options.templateId);
+  const flagshipQuality = assessFlagshipQualityScope(options, schematic.layout);
   const layoutLabel = schematic.layout === 'single-column'
     ? '89 mm 单栏重排'
     : schematic.layout === 'presentation'
@@ -698,6 +700,26 @@ function SchematicEditor({
           <strong>投稿级原生图元预览</strong>
           <span>{layoutLabel} · {schematic.nodes.length} 个对象 · {schematic.edges.length} 条连接</span>
         </div>
+        {flagshipQuality.status !== 'not-flagship' && flagshipQuality.scorecard && (
+          <div
+            className={`flagship-quality-strip flagship-quality-strip--${flagshipQuality.status}`}
+            role="status"
+            data-flagship-quality-status={flagshipQuality.status}
+            data-flagship-template-id={options.templateId}
+          >
+            {flagshipQuality.status === 'audited'
+              ? <CheckCircle2 size={17} aria-hidden="true" />
+              : <TriangleAlert size={17} aria-hidden="true" />}
+            <span>
+              <strong>{flagshipQuality.status === 'audited'
+                ? `旗舰门禁 ${flagshipQuality.scorecard.totalScore.toFixed(1)} / 100`
+                : '旗舰图需重新复核'}</strong>
+              <small>{flagshipQuality.status === 'audited'
+                ? `最低单项 ${flagshipQuality.scorecard.minimumDimensionScore.toFixed(1)} / 10 · 量表 ${flagshipQuality.scorecard.rubricVersion}`
+                : flagshipQuality.reasons.join(' · ')}</small>
+            </span>
+          </div>
+        )}
         <div className="schematic-preview-stage"><SchematicPreview schematic={schematic} /></div>
         <div className="schematic-reference-strip">
           <span><Cpu size={14} />构图研究</span>
