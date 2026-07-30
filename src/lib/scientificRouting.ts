@@ -3,6 +3,7 @@ import type {
   FlowEdge,
   LineStyle,
   ScientificConnectorSemantic,
+  ScientificRouteAnchorOffset,
   ScientificRouteSide,
 } from '../types';
 
@@ -44,7 +45,7 @@ export const SCIENTIFIC_CONNECTOR_STYLES: Record<ScientificConnectorSemantic, {
   feedback: { color: '#A34F3C', width: 3.6, lineStyle: 'dashed', arrowEnd: 'closed' },
   optional: { color: '#6C737A', width: 2.4, lineStyle: 'dotted', arrowEnd: 'open' },
   broadcast: { color: '#2F6F5E', width: 3.2, lineStyle: 'solid', arrowEnd: 'closed' },
-  temporal: { color: '#7A5A23', width: 3.2, lineStyle: 'dashed', arrowEnd: 'closed' },
+  temporal: { color: '#7A5A23', width: 3.2, lineStyle: 'solid', arrowEnd: 'closed' },
 };
 
 export function isFeedbackEdge(edge: FlowEdge): boolean {
@@ -142,6 +143,21 @@ export function routeScientificEdge(
   source: ScientificRoutePoint,
   target: ScientificRoutePoint,
 ): ScientificEdgeRoute {
+  const offsetPoint = (
+    point: ScientificRoutePoint,
+    offset: ScientificRouteAnchorOffset | undefined,
+  ): ScientificRoutePoint => {
+    const dx = Number(offset?.dx);
+    const dy = Number(offset?.dy);
+    return {
+      x: point.x + (Number.isFinite(dx) ? dx : 0),
+      y: point.y + (Number.isFinite(dy) ? dy : 0),
+    };
+  };
+  const routedSource = offsetPoint(source, edge.data?.sourceAnchorOffset);
+  const routedTarget = offsetPoint(target, edge.data?.targetAnchorOffset);
+  source = routedSource;
+  target = routedTarget;
   const midpoint = { x: (source.x + target.x) / 2, y: (source.y + target.y) / 2 };
   const configuredWaypoints = edge.data?.routeWaypoints;
   if (Array.isArray(configuredWaypoints) && configuredWaypoints.length) {

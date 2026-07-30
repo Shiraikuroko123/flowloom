@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ScientificSchematicLayout, ScientificSchematicOptions } from '../types';
 import {
-  FLAGSHIP_MINIMUM_DIMENSION_SCORE,
+  FLAGSHIP_MINIMUM_DIMENSION_RATIO,
   FLAGSHIP_QUALITY_DIMENSIONS,
   FLAGSHIP_QUALITY_SCORECARDS,
   FLAGSHIP_QUALITY_THRESHOLD,
@@ -24,35 +24,60 @@ function auditedOptions(templateId: typeof FLAGSHIP_TEMPLATE_IDS[number]): Scien
   };
 }
 
+const EXPECTED_LAYOUT_TOTALS = {
+  'vla-policy': [95.2, 96.0, 95.3],
+  'world-model-rollout': [95.3, 96.0, 96.2],
+  'llm-training-pipeline': [95.2, 95.8, 96.5],
+} as const;
+
 describe('flagship quality gate', () => {
-  it('requires every flagship to independently score at least 95 with no weak dimension', () => {
+  it('records all nine independent layout reviews and gates on the weakest layout', () => {
     expect(Object.keys(FLAGSHIP_QUALITY_SCORECARDS)).toEqual([...FLAGSHIP_TEMPLATE_IDS]);
     for (const templateId of FLAGSHIP_TEMPLATE_IDS) {
       const scorecard = FLAGSHIP_QUALITY_SCORECARDS[templateId];
-      const arithmeticTotal = Math.round(scorecard.dimensions.reduce((sum, item) => sum + item.score, 0) * 10) / 10;
       expect(scorecard.dimensions.map((item) => item.id), templateId).toEqual(
         FLAGSHIP_QUALITY_DIMENSIONS.map((item) => item.id),
       );
-      expect(scorecard.totalScore, `${templateId}:arithmetic`).toBe(arithmeticTotal);
-      expect(scorecard.totalScore, `${templateId}:total`).toBeGreaterThanOrEqual(FLAGSHIP_QUALITY_THRESHOLD);
-      expect(scorecard.minimumDimensionScore, `${templateId}:minimum`).toBeGreaterThanOrEqual(FLAGSHIP_MINIMUM_DIMENSION_SCORE);
-      expect(scorecard.dimensions.every((item) => item.score >= FLAGSHIP_MINIMUM_DIMENSION_SCORE && item.score <= 10), templateId).toBe(true);
+      expect(scorecard.layoutReviews.map((review) => review.layout), templateId).toEqual([
+        'single-column',
+        'double-column',
+        'presentation',
+      ]);
+      expect(scorecard.layoutReviews.map((review) => review.totalScore), templateId).toEqual(
+        [...EXPECTED_LAYOUT_TOTALS[templateId]],
+      );
+      for (const review of scorecard.layoutReviews) {
+        const mean = Number((review.dimensions.reduce((sum, item) => sum + item.score, 0) / review.dimensions.length).toFixed(1));
+        expect(review.totalScore, `${templateId}:${review.layout}:mean`).toBe(mean);
+        expect(review.totalScore, `${templateId}:${review.layout}:threshold`).toBeGreaterThanOrEqual(FLAGSHIP_QUALITY_THRESHOLD);
+        expect(review.passed, `${templateId}:${review.layout}:passed`).toBe(true);
+      }
+      expect(scorecard.totalScore, `${templateId}:weakest-layout`).toBe(
+        Math.min(...scorecard.layoutReviews.map((review) => review.totalScore)),
+      );
+      expect(scorecard.dimensions.every((item) => item.maxScore === 100), templateId).toBe(true);
+      expect(scorecard.dimensions.every((item) => item.score >= FLAGSHIP_QUALITY_THRESHOLD), templateId).toBe(true);
       expect(scorecard.dimensions.every((item) => item.evidence.trim().length > 0), templateId).toBe(true);
+      expect(scorecard.criticalFindings, templateId).toBe(0);
+      expect(scorecard.majorFindings, templateId).toBe(0);
       expect(scorecard.passed, templateId).toBe(true);
+      expect(scorecard.superseded, templateId).toBe(false);
     }
+    expect(FLAGSHIP_MINIMUM_DIMENSION_RATIO).toBe(0.7);
   });
 
-  it('limits the passed score to the exact audited content, styles, and layouts', () => {
+  it('marks the exact signed-off conference matrix as independently reviewed', () => {
     const layouts: ScientificSchematicLayout[] = ['single-column', 'double-column', 'presentation'];
     for (const templateId of FLAGSHIP_TEMPLATE_IDS) {
       for (const layout of layouts) {
-        expect(assessFlagshipQualityScope(auditedOptions(templateId), layout).status, `${templateId}:${layout}:conference`).toBe('audited');
-        expect(assessFlagshipQualityScope({ ...auditedOptions(templateId), style: 'monochrome' }, layout).status, `${templateId}:${layout}:monochrome`).toBe('audited');
+        const result = assessFlagshipQualityScope(auditedOptions(templateId), layout);
+        expect(result.status, `${templateId}:${layout}`).toBe('reviewed');
+        expect(result.reasons.join(' '), `${templateId}:${layout}:score`).toContain('/100');
       }
     }
   });
 
-  it('does not let edited or unaudited variants inherit the flagship score', () => {
+  it('does not let edited or unaudited variants inherit the flagship review', () => {
     const base = auditedOptions('vla-policy');
     const variants: Array<[string, ScientificSchematicOptions, ScientificSchematicLayout]> = [
       ['title', { ...base, title: 'Custom policy' }, 'double-column'],
@@ -65,6 +90,7 @@ describe('flagship quality gate', () => {
         backbone: defaultScientificSchematicBackbone(base.templateId, 'zh'),
       }, 'double-column'],
       ['style', { ...base, style: 'technical' }, 'double-column'],
+      ['monochrome', { ...base, style: 'monochrome' }, 'double-column'],
       ['layout', base, 'freeform'],
     ];
 

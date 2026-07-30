@@ -15,6 +15,8 @@ const generatedAt = new Date().toISOString();
 const sourceFiles = [
   'src/types.ts',
   'src/lib/flagshipQuality.ts',
+  'src/lib/scientificFlagshipsV3.ts',
+  'src/lib/scientificFlagshipsV4.ts',
   'src/lib/scientificSchematics.ts',
   'src/lib/scientific.ts',
   'src/lib/scientificEvidence.ts',
@@ -23,6 +25,25 @@ const sourceFiles = [
   'src/lib/scientificNodeLayout.ts',
   'src/lib/scientificRouting.ts',
   'src/lib/scientificVisualVariants.ts',
+  'src/lib/publicationEvidenceBrowser.ts',
+  'src/assets/scientific/vla-approach.jpg',
+  'src/assets/scientific/vla-approach-print.jpg',
+  'src/assets/scientific/vla-front.jpg',
+  'src/assets/scientific/vla-grasp.jpg',
+  'src/assets/scientific/vla-grasp-print.jpg',
+  'src/assets/scientific/vla-observe.jpg',
+  'src/assets/scientific/vla-observe-print.jpg',
+  'src/assets/scientific/vla-place.jpg',
+  'src/assets/scientific/vla-place-print.jpg',
+  'src/assets/scientific/world-collision.jpg',
+  'src/assets/scientific/world-collision-print.jpg',
+  'src/assets/scientific/world-observed.jpg',
+  'src/assets/scientific/world-observed-print.jpg',
+  'src/assets/scientific/world-occluded.jpg',
+  'src/assets/scientific/world-occluded-print.jpg',
+  'src/assets/scientific/world-success.jpg',
+  'src/assets/scientific/world-success-print.jpg',
+  'docs/research/SYNTHETIC_ASSET_PROVENANCE.md',
   'src/components/ScientificDialog.tsx',
   'src/components/ShapeVisual.tsx',
 ];
@@ -43,15 +64,42 @@ const previewViewports = [
   { id: 'laptop-1366x768', width: 1366, height: 768 },
 ];
 const previewThresholds = {
-  adjacentPhaseTextGapPx: 12,
-  phaseTextInsetPx: 8,
-  controllerTextInsetPx: 8,
+  adjacentPhaseTextGapUnits: 12,
+  phaseTextInsetUnits: 8,
+  controllerTextInsetUnits: 8,
   overflowTolerancePx: 0.75,
 };
 
 function parseArgument(name) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
+async function withTimeout(promise, timeoutMs, label) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs} ms.`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function buildArtifactInFreshPage(browser, url, request, stem) {
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1200 }, deviceScaleFactor: 1 });
+  try {
+    await withTimeout(page.goto(url, { waitUntil: 'networkidle' }), 30_000, `Loading ${stem}`);
+    return await withTimeout(page.evaluate(async (payload) => {
+      const module = await import('/src/lib/publicationEvidenceBrowser.ts');
+      return module.buildPublicationEvidenceArtifact(payload);
+    }, request), 90_000, `Generating ${stem}`);
+  } finally {
+    await withTimeout(page.close(), 10_000, `Closing ${stem} page`);
+  }
 }
 
 async function availablePort() {
@@ -254,6 +302,19 @@ async function measurePresentationPreview(page, exportSvg, viewport, template) {
       `svg[data-flowloom-preview-layout="presentation"][data-flowloom-preview-template-id="${expectedTemplate}"]`,
     );
     if (!svg) throw new Error(`Presentation preview is missing for ${expectedTemplate}.`);
+    const matrix = svg.getScreenCTM();
+    if (!matrix) throw new Error(`Presentation preview transform is missing for ${expectedTemplate}.`);
+    const scaleX = Math.hypot(matrix.a, matrix.b);
+    const scaleY = Math.hypot(matrix.c, matrix.d);
+    const insetsInUnits = (outer, inner) => {
+      const measured = insets(outer, inner);
+      return {
+        left: round(measured.left / scaleX),
+        top: round(measured.top / scaleY),
+        right: round(measured.right / scaleX),
+        bottom: round(measured.bottom / scaleY),
+      };
+    };
 
     const exportDocument = new DOMParser().parseFromString(exportSource, 'image/svg+xml');
     const exportPhaseLines = Object.fromEntries(Array.from(
@@ -293,17 +354,18 @@ async function measurePresentationPreview(page, exportSvg, viewport, template) {
         nodeId,
         role,
         lines,
-        insets: label ? insets(box, label) : undefined,
+        insets: label ? insetsInUnits(box, label) : undefined,
       };
       nodeMeasurements.push(measurement);
 
       if (role === 'phase' && label) {
-        const phaseInsets = insets(box, label);
-        const insetPass = Object.values(phaseInsets).every((value) => value >= thresholds.phaseTextInsetPx);
+        const phaseInsets = insetsInUnits(box, label);
+        const insetPass = Object.values(phaseInsets).every((value) => value >= thresholds.phaseTextInsetUnits);
         check('phase-label-inset', insetPass, {
           nodeId,
           actual: phaseInsets,
-          minimumPx: thresholds.phaseTextInsetPx,
+          unit: 'schematic-unit',
+          minimum: thresholds.phaseTextInsetUnits,
         });
         const exportedLines = exportPhaseLines[nodeId] ?? [];
         check('phase-preview-export-line-parity', JSON.stringify(lines) === JSON.stringify(exportedLines), {
@@ -317,27 +379,35 @@ async function measurePresentationPreview(page, exportSvg, viewport, template) {
 
     phaseMeasurements.sort((left, right) => left.box.left - right.box.left);
     const adjacentPhaseGaps = [];
-    for (let index = 0; index < phaseMeasurements.length - 1; index += 1) {
-      const left = phaseMeasurements[index];
-      const right = phaseMeasurements[index + 1];
-      const gap = round(right.label.left - left.label.right);
-      adjacentPhaseGaps.push({ left: left.nodeId, right: right.nodeId, gapPx: gap });
-      check('adjacent-phase-label-gap', gap >= thresholds.adjacentPhaseTextGapPx, {
+    for (const left of phaseMeasurements) {
+      const right = phaseMeasurements
+        .filter((candidate) => {
+          if (candidate.box.left < left.box.right - thresholds.overflowTolerancePx) return false;
+          const overlap = Math.min(left.box.bottom, candidate.box.bottom) - Math.max(left.box.top, candidate.box.top);
+          return overlap >= Math.min(left.box.height, candidate.box.height) * 0.5;
+        })
+        .sort((first, second) => first.box.left - second.box.left)[0];
+      if (!right) continue;
+      const gap = round((right.label.left - left.label.right) / scaleX);
+      adjacentPhaseGaps.push({ left: left.nodeId, right: right.nodeId, gap, unit: 'schematic-unit' });
+      check('adjacent-phase-label-gap', gap >= thresholds.adjacentPhaseTextGapUnits, {
         left: left.nodeId,
         right: right.nodeId,
-        actualPx: gap,
-        minimumPx: thresholds.adjacentPhaseTextGapPx,
+        actual: gap,
+        unit: 'schematic-unit',
+        minimum: thresholds.adjacentPhaseTextGapUnits,
       });
     }
 
     const controller = nodeMeasurements.find((node) => node.nodeId === 'vla-controller');
     if (expectedTemplate === 'vla-policy') {
       const controllerPass = controller?.insets
-        && Object.values(controller.insets).every((value) => value >= thresholds.controllerTextInsetPx);
+        && Object.values(controller.insets).every((value) => value >= thresholds.controllerTextInsetUnits);
       check('vla-controller-label-inset', Boolean(controllerPass), {
         nodeId: 'vla-controller',
         actual: controller?.insets,
-        minimumPx: thresholds.controllerTextInsetPx,
+        unit: 'schematic-unit',
+        minimum: thresholds.controllerTextInsetUnits,
       });
     }
 
@@ -387,10 +457,13 @@ function baseMarkdownReport(manifest) {
   const flagshipRows = manifest.flagships.map((item) => (
     `| ${item.templateId} | ${item.totalScore.toFixed(1)} | ${item.minimumDimensionScore.toFixed(1)} | ${item.variantCount}/${item.expectedVariantCount} | ${item.failureReasons.length ? item.failureReasons.join('; ') : 'none'} |`
   )).join('\n');
+  const layoutReviewRows = manifest.flagships.flatMap((item) => item.layoutReviews.map((review) => (
+    `| ${item.templateId} | ${review.layout} | ${review.dimensions.map((dimension) => dimension.score.toFixed(0)).join(' / ')} | ${review.totalScore.toFixed(1)} | ${review.passed ? 'PASS' : 'FAIL'} |`
+  ))).join('\n');
   const dimensionSections = manifest.flagships.map((item) => (
-    `### ${item.name}\n\n${item.dimensions.map((dimension) => `- ${dimension.label}: **${dimension.score.toFixed(1)} / 10** — ${dimension.evidence}`).join('\n')}`
+    `### ${item.name}\n\n${item.dimensions.map((dimension) => `- ${dimension.label}: **${dimension.score.toFixed(1)} / ${dimension.maxScore}** - ${dimension.evidence}`).join('\n')}`
   )).join('\n\n');
-  return `# Flowloom Publication Evidence\n\nGenerated: ${manifest.generatedAt}\n\nThis bundle is generated from the current source tree. Automated checks establish export readiness; they do not certify scientific claims or venue acceptance.\n\n## Coverage\n\n- 3 flagship figures\n- 3 physical layouts: 89 x 70 mm, 180 x 120 mm, 180 x 101.25 mm\n- conference color and monochrome\n- editable SVG, vector PDF, and 300 DPI PNG\n- grayscale plus protanopia, deuteranopia, and tritanopia review simulations\n- every PDF rerendered at 300 DPI with Poppler\n- editor preview geometry measured at 1920 x 1200, 1920 x 1080, and 1366 x 768\n- preview phase wrapping compared line-for-line with exported SVG\n\n## Gate\n\n- Minimum flagship score: **${manifest.summary.minimumFlagshipScore.toFixed(1)} / 100**\n- Flagships below gate or with evidence failures: **${manifest.summary.flagshipFailures}**\n- Audit errors: **${manifest.summary.auditErrors}**\n- Raster failures: **${manifest.summary.rasterFailures}**\n- PDFs with unembedded fonts: **${manifest.summary.pdfFontFailures}**\n- Preview geometry failures: **${manifest.summary.previewLayoutFailures}**\n- Preview geometry checks: **${manifest.summary.previewLayoutChecks}**\n- Core artifacts: **${manifest.summary.coreArtifactFiles}**\n- Accessibility simulations: **${manifest.summary.accessibilityFiles}**\n- Poppler renders: **${manifest.summary.pdfRenderFiles}**\n\n| Flagship | Score / 100 | Lowest dimension / 10 | Variants | Failure reasons |\n| --- | ---: | ---: | ---: | --- |\n${flagshipRows}\n\n## Dimension Scorecards\n\n${dimensionSections}\n\n## Export Variants\n\n| Figure | Layout | Style | Nodes/edges | Min font pt | Min stroke pt | Audit E/W/I | PDF fonts embedded |\n| --- | --- | --- | ---: | ---: | ---: | ---: | --- |\n${rows}\n\n## Contact Sheets\n\n- \`contact-sheets/core-exports.jpg\`\n- \`contact-sheets/accessibility-simulations.jpg\`\n- \`contact-sheets/pdf-poppler-renders.jpg\`\n\nAll file hashes and source fingerprints are in \`manifest.json\`. CVD outputs are review simulations, not clinical vision models.\n`;
+  return `# Flowloom Publication Evidence\n\nGenerated: ${manifest.generatedAt}\n\nThis bundle is generated from the current source tree. Automated checks establish export readiness; they do not certify scientific claims or venue acceptance.\n\n## Coverage\n\n- 3 flagship figures\n- 3 physical layouts: 89 x 70 mm, 180 x 120 mm, 180 x 101.25 mm\n- conference color and monochrome\n- editable SVG, vector PDF, and 300 DPI PNG\n- grayscale plus protanopia, deuteranopia, and tritanopia review simulations\n- every PDF rerendered at 300 DPI with Poppler\n- editor preview geometry measured at 1920 x 1200, 1920 x 1080, and 1366 x 768\n- preview phase wrapping compared line-for-line with exported SVG\n\n## Gate\n\n- Minimum flagship score: **${manifest.summary.minimumFlagshipScore.toFixed(1)} / 100**\n- Flagships below gate or with evidence failures: **${manifest.summary.flagshipFailures}**\n- Audit errors: **${manifest.summary.auditErrors}**\n- Raster failures: **${manifest.summary.rasterFailures}**\n- PDFs with unembedded fonts: **${manifest.summary.pdfFontFailures}**\n- Preview geometry failures: **${manifest.summary.previewLayoutFailures}**\n- Preview geometry checks: **${manifest.summary.previewLayoutChecks}**\n- Core artifacts: **${manifest.summary.coreArtifactFiles}**\n- Accessibility simulations: **${manifest.summary.accessibilityFiles}**\n- Poppler renders: **${manifest.summary.pdfRenderFiles}**\n\n| Flagship | Score / 100 | Lowest dimension / 100 | Variants | Failure reasons |\n| --- | ---: | ---: | ---: | --- |\n${flagshipRows}\n\n## Independent Layout Reviews\n\nSix-axis order: scientific narrative / visual hierarchy / routing and collision control / composition balance / physical-scale readability / cross-format consistency.\n\n| Flagship | Layout | Six-axis scores | Mean / 100 | Decision |\n| --- | --- | --- | ---: | --- |\n${layoutReviewRows}\n\n## Conservative Dimension Scorecards\n\n${dimensionSections}\n\n## Export Variants\n\n| Figure | Layout | Style | Nodes/edges | Min font pt | Min stroke pt | Audit E/W/I | PDF fonts embedded |\n| --- | --- | --- | ---: | ---: | ---: | ---: | --- |\n${rows}\n\n## Contact Sheets\n\n- \`contact-sheets/core-exports.jpg\`\n- \`contact-sheets/accessibility-simulations.jpg\`\n- \`contact-sheets/pdf-poppler-renders.jpg\`\n\nAll file hashes and source fingerprints are in \`manifest.json\`. CVD outputs are review simulations, not clinical vision models.\n`;
 }
 
 function markdownReport(manifest) {
@@ -413,31 +486,29 @@ async function main() {
   let browser;
   try {
     browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({ viewport: { width: 1920, height: 1200 }, deviceScaleFactor: 1 });
-    await page.goto(server.url, { waitUntil: 'networkidle' });
-    const qualityGate = await page.evaluate(async () => {
+    const qualityPage = await browser.newPage({ viewport: { width: 1920, height: 1200 }, deviceScaleFactor: 1 });
+    await qualityPage.goto(server.url, { waitUntil: 'networkidle' });
+    const qualityGate = await qualityPage.evaluate(async () => {
       const module = await import('/src/lib/flagshipQuality.ts');
       return {
         threshold: module.FLAGSHIP_QUALITY_THRESHOLD,
-        minimumDimensionScore: module.FLAGSHIP_MINIMUM_DIMENSION_SCORE,
+        minimumDimensionRatio: module.FLAGSHIP_MINIMUM_DIMENSION_RATIO,
         rubricVersion: module.FLAGSHIP_QUALITY_RUBRIC_VERSION,
         scorecards: module.FLAGSHIP_QUALITY_SCORECARDS,
       };
     });
+    await qualityPage.close();
     const artifacts = [];
     const presentationSvgs = new Map();
     for (const template of templates) {
       for (const format of formats) {
         for (const style of styles) {
           const request = { templateId: template.id, style, spec: specFor(format) };
-          const artifact = await page.evaluate(async (payload) => {
-            const module = await import('/src/lib/publicationEvidenceBrowser.ts');
-            return module.buildPublicationEvidenceArtifact(payload);
-          }, request);
+          const stem = `${template.slug}-${format.id}-${style}`;
+          const artifact = await buildArtifactInFreshPage(browser, server.url, request, stem);
           if (format.id === 'presentation' && style === 'conference') {
             presentationSvgs.set(template.id, artifact.svg);
           }
-          const stem = `${template.slug}-${format.id}-${style}`;
           const svgPath = path.join(outputRoot, 'svg', `${stem}.svg`);
           const pdfPath = path.join(outputRoot, 'pdf', `${stem}.pdf`);
           const pngPath = path.join(outputRoot, 'png', `${stem}.png`);
@@ -479,8 +550,10 @@ async function main() {
         }
       }
     }
-    const screenshotFiles = await captureFinalQaScreenshots(page, server.url);
-    const previewLayoutValidation = await collectPreviewLayoutValidation(page, server.url, presentationSvgs);
+    const qaPage = await browser.newPage({ viewport: { width: 1920, height: 1200 }, deviceScaleFactor: 1 });
+    const screenshotFiles = await captureFinalQaScreenshots(qaPage, server.url);
+    const previewLayoutValidation = await collectPreviewLayoutValidation(qaPage, server.url, presentationSvgs);
+    await qaPage.close();
     const previewScreenshots = await Promise.all(screenshotFiles.map(async (file) => ({
       file: path.relative(root, file).replaceAll('\\', '/'),
       sha256: await sha256(file),
@@ -515,6 +588,10 @@ async function main() {
     const flagships = templates.map((template) => {
       const scorecard = qualityGate.scorecards[template.id];
       if (!scorecard) throw new Error(`Missing flagship scorecard for ${template.id}.`);
+      const minimumDimensionScore = Math.min(...scorecard.dimensions.map((dimension) => (
+        dimension.score / dimension.maxScore * 100
+      )));
+      const minimumDimensionGate = qualityGate.minimumDimensionRatio * 100;
       const templateArtifacts = artifacts.filter((artifact) => artifact.templateId === template.id);
       const templatePreviewChecks = previewLayoutValidation.filter((item) => item.templateId === template.id);
       const failureReasons = [];
@@ -524,8 +601,8 @@ async function main() {
       if (scorecard.totalScore < qualityGate.threshold) {
         failureReasons.push(`score ${scorecard.totalScore.toFixed(1)} is below ${qualityGate.threshold}`);
       }
-      if (scorecard.minimumDimensionScore < qualityGate.minimumDimensionScore) {
-        failureReasons.push(`lowest dimension ${scorecard.minimumDimensionScore.toFixed(1)} is below ${qualityGate.minimumDimensionScore}`);
+      if (minimumDimensionScore < minimumDimensionGate) {
+        failureReasons.push(`lowest dimension ${minimumDimensionScore.toFixed(1)} is below ${minimumDimensionGate.toFixed(1)}`);
       }
       const variants = templateArtifacts.map((artifact) => {
         const raster = visualEquivalence.find((item) => item.stem === artifact.stem);
@@ -564,11 +641,14 @@ async function main() {
         name: scorecard.name,
         rubricVersion: scorecard.rubricVersion,
         reviewedAt: scorecard.reviewedAt,
+        reviewer: scorecard.reviewer,
+        reviewedRevision: scorecard.reviewedRevision,
         scope: scorecard.scope,
         threshold: scorecard.threshold,
         totalScore: scorecard.totalScore,
-        minimumDimensionScore: scorecard.minimumDimensionScore,
+        minimumDimensionScore,
         dimensions: scorecard.dimensions,
+        layoutReviews: scorecard.layoutReviews,
         expectedVariantCount,
         variantCount: templateArtifacts.length,
         variants,
@@ -602,7 +682,8 @@ async function main() {
       },
       acceptanceGate: {
         reviewerScore: qualityGate.threshold,
-        minimumDimensionScore: qualityGate.minimumDimensionScore,
+        minimumDimensionRatio: qualityGate.minimumDimensionRatio,
+        minimumDimensionScore: qualityGate.minimumDimensionRatio * 10,
         rubricVersion: qualityGate.rubricVersion,
         critical: 0,
         previewThresholds,

@@ -1084,6 +1084,7 @@ function ShapeVisualComponent({
     case 'scientific-tensor':
       geometry = (
         <>
+          <path d="M0 50H18M91 50H100" {...detail} />
           <path d="M18 24L68 10L91 28L40 43ZM18 24V69L40 88V43M40 43L91 28V72L40 88" {...outline} />
           <path d="M34 20L56 38M50 15L72 33M18 39L40 57L91 42M18 54L40 72L91 57M57 38V83M74 33V78" opacity="0.62" {...detail} />
           <path d="M12 24V69M8 29L12 23L16 29M8 64L12 70L16 64M40 92H91M45 88L39 92L45 96M86 88L92 92L86 96" {...detail} />

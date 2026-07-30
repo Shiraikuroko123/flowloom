@@ -1596,6 +1596,18 @@ input[type="range"] {
   white-space: nowrap;
 }
 
+.flow-node__image-label--scientific {
+  inset-inline-start: 3px;
+  inset-block-end: 3px;
+  max-width: calc(100% - 6px);
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: rgb(23 35 45 / 0.88);
+  font-size: var(--node-font-size);
+  line-height: 1;
+  text-overflow: clip;
+}
+
 .flow-node__lock {
   position: absolute;
   inset-block-start: 6px;

@@ -400,6 +400,20 @@ function serializeNodeText(node: FlowNode, box: NodeBox): string {
   return `${label}<text fill="${escapeXml(portableColor(node.data.textColor))}" fill-opacity="0.82" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="${descriptionFontSize}" text-anchor="${textAnchor}">${descriptionTspans}</text>`;
 }
 
+function serializeScientificImageLabel(node: FlowNode, box: NodeBox): string {
+  const label = node.data.label.trim();
+  if (node.data.scientificEvidence !== 'schematic' || !label) return '';
+  const fontSize = node.data.fontSize;
+  const paddingX = Math.max(2, fontSize * 0.28);
+  const paddingY = Math.max(1, fontSize * 0.08);
+  const width = Math.min(box.width - 4, estimateSvgTextWidth(label, fontSize) + paddingX * 2);
+  const height = Math.min(box.height - 4, fontSize * 0.98 + paddingY * 2);
+  const x = box.x + 2;
+  const y = box.y + box.height - height - 2;
+  const baseline = y + height - paddingY - fontSize * 0.12;
+  return `<g data-flowloom-image-label="true"><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="2" fill="#17232d" fill-opacity="0.88"/><text fill="#ffffff" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="${fontSize}" font-weight="${node.data.fontWeight}" text-anchor="start"><tspan x="${x + paddingX}" y="${baseline}">${escapeXml(label)}</tspan></text></g>`;
+}
+
 function serializeVectorNode(node: FlowNode, box: NodeBox): string {
   const vector = node.data.vector;
   if (!vector) return '';
@@ -422,7 +436,15 @@ function serializeVectorNode(node: FlowNode, box: NodeBox): string {
 function serializeShapeNode(node: FlowNode, box: NodeBox): string {
   if (node.data.kind === 'image') {
     if (!node.data.imageUrl) return '';
-    return `<g opacity="${node.data.opacity}"${transformForBox(box, node.data.rotation ?? 0)}><image x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" href="${escapeXml(node.data.imageUrl)}" preserveAspectRatio="none"/></g>`;
+    const clipId = `image-clip-${node.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+    const radius = Math.max(0, node.data.radius ?? 0);
+    const stroke = portableColor(node.data.stroke);
+    const preserveAspectRatio = node.data.imageFit === 'cover' ? 'xMidYMid slice' : 'xMidYMid meet';
+    const border = !['none', 'transparent'].includes(stroke) && node.data.borderWidth > 0
+      ? `<rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="${radius}" fill="none" stroke="${stroke}" stroke-width="${node.data.borderWidth}" vector-effect="non-scaling-stroke"/>`
+      : '';
+    const label = serializeScientificImageLabel(node, box);
+    return `<g opacity="${node.data.opacity}"${transformForBox(box, node.data.rotation ?? 0)}><defs><clipPath id="${clipId}"><rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="${radius}"/></clipPath></defs><image x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" href="${escapeXml(node.data.imageUrl)}" preserveAspectRatio="${preserveAspectRatio}" clip-path="url(#${clipId})"/>${border}${label}</g>`;
   }
   const fill = portableColor(node.data.fill);
   const stroke = portableColor(node.data.stroke);
@@ -480,13 +502,15 @@ function serializeEdges(edges: FlowEdge[], boxes: Map<string, NodeBox>): string 
     const route = routeScientificEdge(edge, source, target);
     const label = String(edge.data?.label ?? edge.label ?? '').trim();
     const labelFontSize = numeric(edge.data?.labelFontSize, PUBLICATION_TYPOGRAPHY.edgeLabel);
-    const labelBaseline = route.label.y - labelFontSize * 0.35;
+    const labelX = route.label.x + numeric(edge.data?.labelOffsetX, 0);
+    const labelY = route.label.y + numeric(edge.data?.labelOffsetY, 0);
+    const labelBaseline = labelY - labelFontSize * 0.35;
     const labelPaddingX = Math.max(5, labelFontSize * 0.28);
     const labelPaddingY = Math.max(2, labelFontSize * 0.14);
     const labelWidth = estimateSvgTextWidth(label, labelFontSize) + labelPaddingX * 2;
     const labelHeight = labelFontSize * 1.08 + labelPaddingY * 2;
     const labelMarkup = label
-      ? `<g data-flowloom-edge-label="true"><rect data-flowloom-edge-label-bg="true" x="${route.label.x - labelWidth / 2}" y="${labelBaseline - labelFontSize * 0.88 - labelPaddingY}" width="${labelWidth}" height="${labelHeight}" rx="3" fill="#ffffff" fill-opacity="0.96"/><text x="${route.label.x}" y="${labelBaseline}" text-anchor="middle" fill="${color}" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="${labelFontSize}" font-weight="650">${escapeXml(label)}</text></g>`
+      ? `<g data-flowloom-edge-label="true"><rect data-flowloom-edge-label-bg="true" x="${labelX - labelWidth / 2}" y="${labelBaseline - labelFontSize * 0.88 - labelPaddingY}" width="${labelWidth}" height="${labelHeight}" rx="3" fill="#ffffff" fill-opacity="0.96"/><text x="${labelX}" y="${labelBaseline}" text-anchor="middle" fill="${color}" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="${labelFontSize}" font-weight="650">${escapeXml(label)}</text></g>`
       : '';
     const semantic = edge.data?.scientificSemantic ? ` data-connector-semantic="${escapeXml(edge.data.scientificSemantic)}"` : '';
     values.push(`<g data-flowloom-edge-id="${escapeXml(edge.id)}"${semantic}><defs>${markers}</defs><path d="${route.path}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"${dash}${markerStart}${markerEnd}/>${labelMarkup}</g>`);

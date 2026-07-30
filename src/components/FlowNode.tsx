@@ -87,13 +87,21 @@ export function FlowNode({ id, data, selected, width, height }: NodeProps<FlowNo
       {data.imageUrl?.startsWith('data:application/pdf') ? (
         <object className="flow-node__object" data={data.imageUrl} type="application/pdf" aria-label={data.label} />
       ) : data.imageUrl ? (
-        <img className="flow-node__image" src={data.imageUrl} alt={data.label} draggable={false} />
+        <img
+          className="flow-node__image"
+          src={data.imageUrl}
+          alt={data.label}
+          draggable={false}
+          style={{ objectFit: data.imageFit ?? 'contain' }}
+        />
       ) : (
         <FileImage aria-hidden="true" />
       )}
-      {data.imageUrl
-        ? <span className="sr-only">{data.label}</span>
-        : <span className="flow-node__image-label">{data.label}</span>}
+      {data.imageUrl ? (
+        data.scientificEvidence === 'schematic' && data.label.trim()
+          ? <span className="flow-node__image-label flow-node__image-label--scientific">{data.label}</span>
+          : <span className="sr-only">{data.label}</span>
+      ) : <span className="flow-node__image-label">{data.label}</span>}
     </div>
   ) : editing ? textEditor : scientificLayout ? (
     <>

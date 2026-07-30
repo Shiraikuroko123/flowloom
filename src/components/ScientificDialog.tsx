@@ -397,10 +397,11 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
   const renderNode = (node: FlowNode) => {
     const box = boxes.get(node.id)!;
     const isFrame = node.data.schematicRole === 'frame' || node.data.schematicRole === 'phase';
+    const isImage = node.data.kind === 'image' && Boolean(node.data.imageUrl);
     const textLayout = layoutSchematicNodeContent(node.data, box.width, box.height);
-    const lines = textLayout.labelLines;
+    const lines = isImage ? [] : textLayout.labelLines;
     const fontSize = node.data.fontSize;
-    const descriptionLines = textLayout.descriptionLines;
+    const descriptionLines = isImage ? [] : textLayout.descriptionLines;
     const descriptionSize = textLayout.descriptionFontSize;
     const visualHeight = textLayout.visualHeight;
     const horizontalPadding = scientificNodeTextPaddingX(node.data);
@@ -431,7 +432,28 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
           stroke="none"
           pointerEvents="none"
         />
-        {isFrame ? (
+        {isImage ? (
+          <>
+            <image
+              href={node.data.imageUrl}
+              x={box.x}
+              y={box.y}
+              width={box.width}
+              height={box.height}
+              preserveAspectRatio={node.data.imageFit === 'cover' ? 'xMidYMid slice' : 'xMidYMid meet'}
+            />
+            <rect
+              x={box.x}
+              y={box.y}
+              width={box.width}
+              height={box.height}
+              rx={node.data.radius}
+              fill="none"
+              stroke={node.data.stroke}
+              strokeWidth={node.data.borderWidth}
+            />
+          </>
+        ) : isFrame ? (
           <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={node.data.radius} fill={node.data.fill} stroke={node.data.stroke} strokeWidth={node.data.borderWidth} />
         ) : node.data.kind === 'ellipse' ? (
           <ellipse cx={box.x + box.width / 2} cy={box.y + box.height / 2} rx={box.width / 2} ry={box.height / 2} fill={node.data.fill} stroke={node.data.stroke} strokeWidth={node.data.borderWidth} />
@@ -510,7 +532,9 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
         if (!route) return null;
         const edgeLabel = String(edge.data?.label ?? edge.label ?? '').trim();
         const labelFontSize = Number(edge.data?.labelFontSize ?? 22);
-        const labelBaseline = route.label.y - labelFontSize * 0.35;
+        const labelX = route.label.x + Number(edge.data?.labelOffsetX ?? 0);
+        const labelY = route.label.y + Number(edge.data?.labelOffsetY ?? 0);
+        const labelBaseline = labelY - labelFontSize * 0.35;
         const labelPaddingX = Math.max(5, labelFontSize * 0.28);
         const labelPaddingY = Math.max(2, labelFontSize * 0.14);
         const labelWidth = estimateSvgTextWidth(edgeLabel, labelFontSize) + labelPaddingX * 2;
@@ -531,7 +555,7 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
               <g data-flowloom-edge-label="true">
                 <rect
                   data-flowloom-edge-label-bg="true"
-                  x={route.label.x - labelWidth / 2}
+                  x={labelX - labelWidth / 2}
                   y={labelBaseline - labelFontSize * 0.88 - labelPaddingY}
                   width={labelWidth}
                   height={labelHeight}
@@ -540,7 +564,7 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
                   fillOpacity="0.96"
                 />
                 <text
-                  x={route.label.x}
+                  x={labelX}
                   y={labelBaseline}
                   fill={edge.data?.color ?? '#4B5864'}
                   fontSize={labelFontSize}
@@ -707,16 +731,14 @@ function SchematicEditor({
             data-flagship-quality-status={flagshipQuality.status}
             data-flagship-template-id={options.templateId}
           >
-            {flagshipQuality.status === 'audited'
+            {flagshipQuality.status === 'reviewed'
               ? <CheckCircle2 size={17} aria-hidden="true" />
               : <TriangleAlert size={17} aria-hidden="true" />}
             <span>
-              <strong>{flagshipQuality.status === 'audited'
-                ? `旗舰门禁 ${flagshipQuality.scorecard.totalScore.toFixed(1)} / 100`
-                : '旗舰图需重新复核'}</strong>
-              <small>{flagshipQuality.status === 'audited'
-                ? `最低单项 ${flagshipQuality.scorecard.minimumDimensionScore.toFixed(1)} / 10 · 量表 ${flagshipQuality.scorecard.rubricVersion}`
-                : flagshipQuality.reasons.join(' · ')}</small>
+              <strong>{flagshipQuality.status === 'reviewed'
+                ? `独立盲评 ${flagshipQuality.scorecard.totalScore.toFixed(1)}/100`
+                : '当前变体需要独立复核'}</strong>
+              <small>{flagshipQuality.reasons.join(' · ')} · 量表 {flagshipQuality.scorecard.rubricVersion}</small>
             </span>
           </div>
         )}

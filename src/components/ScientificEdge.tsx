@@ -33,14 +33,16 @@ export function ScientificEdge({
   const dash = data?.lineStyle === 'dashed' ? '8 6' : data?.lineStyle === 'dotted' ? '2 5' : undefined;
   const edgeLabel = String(data?.label ?? label ?? '').trim();
   const labelFontSize = Number(data?.labelFontSize ?? 22);
+  const labelX = route.label.x + Number(data?.labelOffsetX ?? 0);
+  const labelY = route.label.y + Number(data?.labelOffsetY ?? 0);
 
   return (
     <BaseEdge
       id={id}
       path={route.path}
       label={edgeLabel || undefined}
-      labelX={route.label.x}
-      labelY={route.label.y - labelFontSize * 0.35}
+      labelX={labelX}
+      labelY={labelY - labelFontSize * 0.35}
       labelStyle={{
         fill: color,
         fontSize: labelFontSize,
@@ -64,4 +66,3 @@ export function ScientificEdge({
     />
   );
 }
-

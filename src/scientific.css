@@ -520,7 +520,8 @@
 .flagship-quality-strip > span { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
 .flagship-quality-strip strong { color: var(--ink); font-size: 0.6875rem; font-variant-numeric: tabular-nums; }
 .flagship-quality-strip small { overflow: hidden; color: var(--muted-strong); font-size: 0.59375rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-.flagship-quality-strip--audited svg { color: var(--success); }
+.flagship-quality-strip--reviewed { background: var(--success-soft); }
+.flagship-quality-strip--reviewed svg { color: var(--success); }
 .flagship-quality-strip--requires-review { background: var(--warning-soft); }
 .flagship-quality-strip--requires-review svg { color: var(--warning); }
 .schematic-preview-stage { display: grid; min-height: 0; flex: 1; place-items: center; padding: 18px; overflow: hidden; background: #ffffff; }

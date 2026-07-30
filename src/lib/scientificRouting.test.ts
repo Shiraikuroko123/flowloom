@@ -34,4 +34,28 @@ describe('scientific connector routing', () => {
       { x: 452, y: 462 },
     ]);
   });
+
+  it('offsets a precision anchor before resolving its relative waypoints', () => {
+    const edge = createFlowEdge('baseline', 'tensor');
+    edge.sourceHandle = 'right';
+    edge.targetHandle = 'bottom';
+    edge.data = {
+      ...edge.data!,
+      targetAnchorOffset: { dx: -84, dy: -76 },
+      routeWaypoints: [
+        { origin: 'source', dx: 35, dy: 0 },
+        { origin: 'source', dx: 35, dy: 65 },
+        { origin: 'target', dx: 0, dy: 96 },
+      ],
+    };
+
+    const route = routeScientificEdge(edge, { x: 667, y: 505 }, { x: 1112.5, y: 550 });
+    expect(route.points).toEqual([
+      { x: 667, y: 505 },
+      { x: 702, y: 505 },
+      { x: 702, y: 570 },
+      { x: 1028.5, y: 570 },
+      { x: 1028.5, y: 474 },
+    ]);
+  });
 });

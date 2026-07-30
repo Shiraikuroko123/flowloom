@@ -173,33 +173,48 @@ export function layoutSchematicNodeContent(
 
   const definition = getShapeDefinition(data.kind);
   const maxWidth = scientificNodeTextMaxWidth(data, width);
-  const maxLabelLines = Math.max(1, Array.from(data.label).length);
-  const labelLines = wrapScientificText(data.label, maxWidth, data.fontSize, maxLabelLines);
   const descriptionFontSize = Math.max(PUBLICATION_TYPOGRAPHY.edgeLabel, data.fontSize * 0.86);
-  const descriptionLines = data.description?.trim()
-    ? wrapScientificText(
-      data.description,
-      maxWidth,
-      descriptionFontSize,
-      Math.max(1, Array.from(data.description).length),
-    )
-    : [];
   const labelLineHeight = data.fontSize * 1.2;
   const descriptionLineHeight = descriptionFontSize * 1.2;
   const isFrame = data.schematicRole === 'frame' || data.schematicRole === 'phase';
-  const totalHeight = Math.max(1, labelLines.length) * labelLineHeight;
-  const labelStartY = isFrame
+  const paddingY = scientificNodeTextPaddingY(data);
+  const availableHeight = Math.max(data.fontSize, height - paddingY * 2);
+  const hasDescription = Boolean(data.description?.trim());
+  const maxLabelLines = isFrame ? 2 : Math.max(1, Math.min(2, Math.floor(availableHeight / labelLineHeight)));
+  const labelLines = wrapScientificText(data.label, maxWidth, data.fontSize, maxLabelLines);
+  // Browser SVG text boxes for the UI font are taller than the canvas text
+  // estimate. Phase headings use these measured metrics so preview and export
+  // remain inside the same logical heading band.
+  const usesMeasuredFrameMetrics = isFrame && paddingY >= SCIENTIFIC_FRAME_TEXT_PADDING_Y;
+  const labelAscentFactor = usesMeasuredFrameMetrics ? 1.08 : 0.86;
+  const labelDescentFactor = usesMeasuredFrameMetrics ? 0.27 : 0.24;
+  const labelHeight = data.fontSize * labelAscentFactor
+    + Math.max(0, labelLines.length - 1) * labelLineHeight
+    + data.fontSize * labelDescentFactor;
+  const gap = hasDescription ? Math.max(3, data.fontSize * 0.16) : 0;
+  const remainingHeight = Math.max(0, availableHeight - labelHeight - gap);
+  const maxDescriptionLines = Math.max(1, Math.min(2, Math.floor(remainingHeight / descriptionLineHeight)));
+  const descriptionLines = hasDescription
+    ? wrapScientificText(data.description!, maxWidth, descriptionFontSize, maxDescriptionLines)
+    : [];
+  const descriptionHeight = descriptionLines.length
+    ? descriptionFontSize * 0.86
+      + Math.max(0, descriptionLines.length - 1) * descriptionLineHeight
+      + descriptionFontSize * 0.24
+    : 0;
+  const textHeight = labelHeight + gap + descriptionHeight;
+  const topAligned = isFrame
     || definition.textPlacement === 'header'
     || definition.textPlacement === 'lane'
-    || data.verticalAlign === 'top'
-    ? data.fontSize + scientificNodeTextPaddingY(data)
-    : definition.textPlacement === 'footer' || data.verticalAlign === 'bottom'
-      ? height - totalHeight + data.fontSize - 8
-      : (height - totalHeight) / 2 + data.fontSize;
-  const descriptionStartY = Math.min(
-    height - 5,
-    labelStartY + labelLines.length * labelLineHeight + data.fontSize * 0.7,
-  );
+    || data.verticalAlign === 'top';
+  const bottomAligned = definition.textPlacement === 'footer' || data.verticalAlign === 'bottom';
+  const top = topAligned
+    ? paddingY
+    : bottomAligned
+      ? Math.max(paddingY, height - paddingY - textHeight)
+      : Math.max(paddingY, (height - textHeight) / 2);
+  const labelStartY = top + data.fontSize * labelAscentFactor;
+  const descriptionStartY = top + labelHeight + gap + descriptionFontSize * 0.86;
 
   return {
     descriptionFontSize,

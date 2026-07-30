@@ -188,6 +188,8 @@ export type ScientificSchematicDensity = 'compact' | 'standard' | 'detailed';
 export type ScientificSchematicLanguage = 'en' | 'zh';
 export type ScientificSchematicLayout = 'freeform' | 'single-column' | 'double-column' | 'presentation';
 export type ScientificEvidenceState = 'schematic' | 'data-bound';
+export type ScientificAssetState = 'synthetic-placeholder' | 'user-provided' | 'measured-evidence';
+export type ImageFit = 'contain' | 'cover';
 export type ScientificConnectorSemantic = 'data' | 'control' | 'gradient' | 'feedback' | 'optional' | 'broadcast' | 'temporal';
 export type ScientificRouteSide = 'left' | 'right' | 'bottom-left' | 'bottom-right';
 export type ScientificVisualVariant =
@@ -330,7 +332,14 @@ export interface FlowNodeData extends Record<string, unknown> {
   hidden?: boolean;
   vector?: SvgVectorElement;
   imageUrl?: string;
+  imageFit?: ImageFit;
   sourceRef?: string;
+  rasterWidthPx?: number;
+  rasterHeightPx?: number;
+  scientificAssetState?: ScientificAssetState;
+  scientificAssetGenerator?: string;
+  scientificAssetPromptRef?: string;
+  scientificAssetLicense?: string;
   provenance?: ScientificProvenance;
   provenanceRef?: string;
   scientificRole?: ScientificRole;
@@ -351,6 +360,11 @@ export interface ScientificRouteWaypoint {
   dy: number;
 }
 
+export interface ScientificRouteAnchorOffset {
+  dx: number;
+  dy: number;
+}
+
 export interface FlowEdgeData extends Record<string, unknown> {
   label?: string;
   color: string;
@@ -363,7 +377,11 @@ export interface FlowEdgeData extends Record<string, unknown> {
   routeSide?: ScientificRouteSide;
   routeOffset?: number;
   routeWaypoints?: ScientificRouteWaypoint[];
+  sourceAnchorOffset?: ScientificRouteAnchorOffset;
+  targetAnchorOffset?: ScientificRouteAnchorOffset;
   labelFontSize?: number;
+  labelOffsetX?: number;
+  labelOffsetY?: number;
 }
 
 export type FlowNode = Node<FlowNodeData, 'flowNode'>;

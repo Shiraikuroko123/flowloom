@@ -1086,16 +1086,49 @@ export function auditScientificFigure(
     });
   }
   const raster = contentNodes.filter((node) => node.data.kind === 'image');
-  if (raster.length) {
+  const rasterWithoutDimensions = raster.filter((node) => (
+    !Number.isFinite(Number(node.data.rasterWidthPx))
+    || !Number.isFinite(Number(node.data.rasterHeightPx))
+    || Number(node.data.rasterWidthPx) <= 0
+    || Number(node.data.rasterHeightPx) <= 0
+  ));
+  if (rasterWithoutDimensions.length) {
     issues.push({
       id: 'raster-resolution',
       severity: 'error',
       category: 'raster',
-      title: `${raster.length} 个位图对象需要核对有效 DPI`,
+      title: `${rasterWithoutDimensions.length} 个位图对象缺少原始像素尺寸`,
       detail: '当前文件未记录全部原始像素尺寸，无法证明有效 DPI，已阻止科研图版导出。',
-      nodeIds: raster.map((node) => node.id),
+      nodeIds: rasterWithoutDimensions.map((node) => node.id),
     });
   }
+  if (spec) {
+    const lowResolutionRaster = raster.filter((node) => {
+      if (rasterWithoutDimensions.includes(node)) return false;
+      const width = Number(node.style?.width ?? node.measured?.width ?? node.width ?? 1);
+      const height = Number(node.style?.height ?? node.measured?.height ?? node.height ?? 1);
+      const effectiveDpiX = Number(node.data.rasterWidthPx) * 96 / Math.max(1, width);
+      const effectiveDpiY = Number(node.data.rasterHeightPx) * 96 / Math.max(1, height);
+      return Math.min(effectiveDpiX, effectiveDpiY) + 0.5 < spec.dpi;
+    });
+    if (lowResolutionRaster.length) issues.push({
+      id: 'raster-effective-dpi',
+      severity: 'error',
+      category: 'raster',
+      title: `${lowResolutionRaster.length} 个位图对象低于目标 ${spec.dpi} DPI`,
+      detail: '请缩小图片的物理尺寸或替换为更高分辨率素材；有效 DPI 按原始像素和当前图版尺寸计算。',
+      nodeIds: lowResolutionRaster.map((node) => node.id),
+    });
+  }
+  const unclassifiedRaster = raster.filter((node) => !node.data.scientificAssetState);
+  if (unclassifiedRaster.length) issues.push({
+    id: 'raster-asset-state',
+    severity: 'warning',
+    category: 'data',
+    title: `${unclassifiedRaster.length} 个位图对象未声明资产状态`,
+    detail: '论文图片应标明为合成占位、用户素材或测量证据，避免示意场景被误读为实验观测。',
+    nodeIds: unclassifiedRaster.map((node) => node.id),
+  });
   const resultLikeNodes = contentNodes.filter((node) => isResultLikeScientificNode(node.data));
   const unclassifiedResults = resultLikeNodes.filter((node) => !node.data.scientificEvidence);
   if (unclassifiedResults.length) issues.push({

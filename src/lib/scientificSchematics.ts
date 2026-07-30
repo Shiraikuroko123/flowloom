@@ -41,6 +41,7 @@ import {
   scientificNodeTextPaddingX,
   scientificNodeTextPaddingY,
 } from './scientificNodeLayout';
+import { buildTopVenueFlagship } from './scientificFlagshipsV4';
 
 export interface ScientificSchematicReference {
   arxivId: string;
@@ -2388,9 +2389,10 @@ function fitBlueprintToFigure(blueprint: Blueprint, spec: ScientificFigureSpec, 
   const availableWidth = Math.max(1, mmToPx(spec.widthMm - marginMm * 2));
   const availableHeight = Math.max(1, mmToPx(spec.heightMm - marginMm * 2));
   const scale = Math.min(1, availableWidth / blueprint.width, availableHeight / blueprint.height);
-  const moduleMinimum = pointsToScientificUnits(layout === 'presentation' ? 11 : 7);
-  const annotationMinimum = pointsToScientificUnits(layout === 'presentation' ? 9 : 7);
-  const titleMinimum = pointsToScientificUnits(layout === 'presentation' ? 13 : 8);
+  const moduleMinimum = pointsToScientificUnits(layout === 'presentation' ? 11 : 7.5);
+  const formulaMinimum = pointsToScientificUnits(layout === 'presentation' ? 11 : 8);
+  const annotationMinimum = pointsToScientificUnits(layout === 'presentation' ? 9 : 7.5);
+  const titleMinimum = pointsToScientificUnits(layout === 'presentation' ? 13 : 7.5);
   const strokeMinimum = pointsToScientificUnits(layout === 'presentation' ? 1 : 0.8);
   const scaledNodes = blueprint.nodes.map((node) => {
     const role = node.data.schematicRole;
@@ -2398,7 +2400,11 @@ function fitBlueprintToFigure(blueprint: Blueprint, spec: ScientificFigureSpec, 
       ? titleMinimum
       : role === 'annotation'
         ? annotationMinimum
-        : moduleMinimum;
+        : role === 'loss'
+          ? formulaMinimum
+          : moduleMinimum;
+    const paddingX = scientificNodeTextPaddingX(node.data);
+    const paddingY = scientificNodeTextPaddingY(node.data);
     return {
       ...node,
       position: { x: node.position.x * scale, y: node.position.y * scale },
@@ -2411,6 +2417,8 @@ function fitBlueprintToFigure(blueprint: Blueprint, spec: ScientificFigureSpec, 
         ...node.data,
         fontSize: Math.max(minimumFontSize, node.data.fontSize * scale),
         borderWidth: Math.max(strokeMinimum, node.data.borderWidth * scale),
+        scientificTextPaddingX: Math.max(2.5, paddingX * scale),
+        scientificTextPaddingY: Math.max(2, paddingY * scale),
       },
     };
   });
@@ -2430,6 +2438,20 @@ function fitBlueprintToFigure(blueprint: Blueprint, spec: ScientificFigureSpec, 
           dx: waypoint.dx * scale,
           dy: waypoint.dy * scale,
         })),
+        sourceAnchorOffset: edge.data?.sourceAnchorOffset
+          ? {
+              dx: edge.data.sourceAnchorOffset.dx * scale,
+              dy: edge.data.sourceAnchorOffset.dy * scale,
+            }
+          : undefined,
+        targetAnchorOffset: edge.data?.targetAnchorOffset
+          ? {
+              dx: edge.data.targetAnchorOffset.dx * scale,
+              dy: edge.data.targetAnchorOffset.dy * scale,
+            }
+          : undefined,
+        labelOffsetX: edge.data?.labelOffsetX === undefined ? undefined : edge.data.labelOffsetX * scale,
+        labelOffsetY: edge.data?.labelOffsetY === undefined ? undefined : edge.data.labelOffsetY * scale,
       },
       style: { ...edge.style, strokeWidth: width },
     };
@@ -2526,13 +2548,14 @@ export function createScientificSchematic(
       targetHeightMm: targetFigure?.heightMm,
     },
   };
-  const responsiveBlueprint = layout === 'single-column'
-    ? buildSingleColumnFlagship(options, provenance)
-    : layout === 'presentation'
-      ? buildTalkFlagship(options, provenance)
-      : layout === 'double-column'
-        ? buildPublicationDoubleFlagship(options, provenance)
-        : undefined;
+  const responsiveBlueprint = buildTopVenueFlagship(options, provenance, layout)
+    ?? (layout === 'single-column'
+      ? buildSingleColumnFlagship(options, provenance)
+      : layout === 'presentation'
+        ? buildTalkFlagship(options, provenance)
+        : layout === 'double-column'
+          ? buildPublicationDoubleFlagship(options, provenance)
+          : undefined);
   const sourceBlueprint = responsiveBlueprint ?? BUILDERS[options.templateId](options, provenance);
   const allowedRank = densityRank(options.density);
   const nodes = sourceBlueprint.nodes.filter((node) => densityRank(node.data.schematicDetail ?? 'compact') <= allowedRank);

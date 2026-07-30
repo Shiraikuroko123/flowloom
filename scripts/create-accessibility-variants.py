@@ -140,9 +140,20 @@ def compare_raster_pair(reference_path: Path, candidate_path: Path) -> dict[str,
     with Image.open(reference_path) as reference_image, Image.open(candidate_path) as candidate_image:
         reference_rgb = reference_image.convert("RGB")
         candidate_rgb = candidate_image.convert("RGB")
+        original_reference_size = reference_rgb.size
         original_candidate_size = candidate_rgb.size
         if candidate_rgb.size != reference_rgb.size:
-            candidate_rgb = candidate_rgb.resize(reference_rgb.size, Image.Resampling.LANCZOS)
+            width_delta = abs(candidate_rgb.width - reference_rgb.width)
+            height_delta = abs(candidate_rgb.height - reference_rgb.height)
+            if width_delta <= 1 and height_delta <= 1:
+                aligned_size = (
+                    min(candidate_rgb.width, reference_rgb.width),
+                    min(candidate_rgb.height, reference_rgb.height),
+                )
+                reference_rgb = reference_rgb.crop((0, 0, *aligned_size))
+                candidate_rgb = candidate_rgb.crop((0, 0, *aligned_size))
+            else:
+                candidate_rgb = candidate_rgb.resize(reference_rgb.size, Image.Resampling.LANCZOS)
 
         reference = luminance_array(reference_rgb)
         candidate = luminance_array(candidate_rgb)
@@ -168,7 +179,7 @@ def compare_raster_pair(reference_path: Path, candidate_path: Path) -> dict[str,
             "stem": reference_path.stem,
             "reference": reference_path.as_posix(),
             "candidate": candidate_path.as_posix(),
-            "referenceSize": list(reference_rgb.size),
+            "referenceSize": list(original_reference_size),
             "candidateSize": list(original_candidate_size),
             "globalSsim": round(global_ssim(reference, candidate), 6),
             "contentSsim": round(global_ssim(reference_content, candidate_content), 6),
