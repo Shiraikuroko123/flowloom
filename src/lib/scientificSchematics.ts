@@ -41,7 +41,7 @@ import {
   scientificNodeTextPaddingX,
   scientificNodeTextPaddingY,
 } from './scientificNodeLayout';
-import { buildTopVenueFlagship } from './scientificFlagshipsV4';
+import { buildTopVenueFlagship } from './scientificFlagshipsV5';
 
 export interface ScientificSchematicReference {
   arxivId: string;
@@ -2393,16 +2393,22 @@ function fitBlueprintToFigure(blueprint: Blueprint, spec: ScientificFigureSpec, 
   const formulaMinimum = pointsToScientificUnits(layout === 'presentation' ? 11 : 8);
   const annotationMinimum = pointsToScientificUnits(layout === 'presentation' ? 9 : 7.5);
   const titleMinimum = pointsToScientificUnits(layout === 'presentation' ? 13 : 7.5);
+  const readableTextMinimum = pointsToScientificUnits(layout === 'presentation' ? 9 : 7.5);
   const strokeMinimum = pointsToScientificUnits(layout === 'presentation' ? 1 : 0.8);
   const scaledNodes = blueprint.nodes.map((node) => {
     const role = node.data.schematicRole;
-    const minimumFontSize = role === 'frame'
+    const labelMinimum = role === 'frame'
       ? titleMinimum
       : role === 'annotation'
         ? annotationMinimum
         : role === 'loss'
           ? formulaMinimum
           : moduleMinimum;
+    const scaledFontSize = Math.max(labelMinimum, node.data.fontSize * scale);
+    const requestedDescriptionFontSize = Number(node.data.scientificDescriptionFontSize);
+    const scaledDescriptionFontSize = Number.isFinite(requestedDescriptionFontSize) && requestedDescriptionFontSize > 0
+      ? requestedDescriptionFontSize * scale
+      : node.data.fontSize * scale * 0.86;
     const paddingX = scientificNodeTextPaddingX(node.data);
     const paddingY = scientificNodeTextPaddingY(node.data);
     return {
@@ -2415,7 +2421,10 @@ function fitBlueprintToFigure(blueprint: Blueprint, spec: ScientificFigureSpec, 
       },
       data: {
         ...node.data,
-        fontSize: Math.max(minimumFontSize, node.data.fontSize * scale),
+        fontSize: scaledFontSize,
+        scientificDescriptionFontSize: node.data.description?.trim()
+          ? Math.max(readableTextMinimum, scaledFontSize * 0.86, scaledDescriptionFontSize)
+          : undefined,
         borderWidth: Math.max(strokeMinimum, node.data.borderWidth * scale),
         scientificTextPaddingX: Math.max(2.5, paddingX * scale),
         scientificTextPaddingY: Math.max(2, paddingY * scale),

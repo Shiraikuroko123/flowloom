@@ -8,6 +8,10 @@ import {
   createScientificSchematic,
   defaultScientificSchematicBackbone,
 } from './scientificSchematics';
+import {
+  FLAGSHIP_SEMANTIC_EDGE_PAIRS,
+  FLAGSHIP_SEMANTIC_NODE_IDS,
+} from './scientificFlagshipsV5';
 import { serializePublicationSvg } from './scientificExport';
 import { parseEditableSvg } from './svgImport';
 import {
@@ -296,7 +300,7 @@ describe('scientific schematic templates', () => {
     });
   });
 
-  it('preserves the scientific dependency contract in every flagship layout', () => {
+  it('preserves the V5 scientific dependency contract in every flagship layout', () => {
     const formats: ScientificFigureSpec[] = [
       { widthMm: 89, heightMm: 70, dpi: 300, rows: 1, columns: 1, marginMm: 6, gapMm: 0, panelLabels: false, labelStyle: 'uppercase', background: '#ffffff', updatedAt: '2026-07-29T00:00:00.000Z' },
       { widthMm: 180, heightMm: 120, dpi: 300, rows: 1, columns: 1, marginMm: 6, gapMm: 0, panelLabels: false, labelStyle: 'uppercase', background: '#ffffff', updatedAt: '2026-07-29T00:00:00.000Z' },
@@ -304,93 +308,53 @@ describe('scientific schematic templates', () => {
     ];
 
     for (const figure of formats) {
-      const vla = createScientificSchematic(options({ templateId: 'vla-policy', density: 'detailed' }), figure);
-      const vlaIds = new Set(vla.nodes.map((node) => node.id));
-      for (const id of ['vla-state', 'vla-fusion', 'vla-action-expert', 'vla-decision', 'vla-action-chunk', 'vla-controller', 'vla-reobserve']) {
-        expect(vlaIds.has(id), `${vla.layout}:${id}`).toBe(true);
+      for (const templateId of ['vla-policy', 'world-model-rollout', 'llm-training-pipeline'] as const) {
+        const schematic = createScientificSchematic(options({ templateId, density: 'detailed' }), figure);
+        const nodeIds = new Set(schematic.nodes.map((node) => node.id));
+        const actualEdgePairs = schematic.edges.map((edge) => `${edge.source}->${edge.target}`).sort();
+
+        for (const id of FLAGSHIP_SEMANTIC_NODE_IDS[templateId]) {
+          expect(nodeIds.has(id), `${templateId}:${schematic.layout}:${id}`).toBe(true);
+        }
+        expect(actualEdgePairs, `${templateId}:${schematic.layout}:edge-contract`)
+          .toEqual([...FLAGSHIP_SEMANTIC_EDGE_PAIRS[templateId]].sort());
+        expect(
+          schematic.edges.every((edge) => !String(edge.data?.label ?? edge.label ?? '').trim()),
+          `${templateId}:${schematic.layout}:connector-labels`,
+        ).toBe(true);
       }
-      expect(hasDirectedPath(vla.edges, 'vla-state', 'vla-action-expert'), `${vla.layout}:state-to-policy`).toBe(true);
-      expect(hasDirectedPath(vla.edges, 'vla-action-expert', 'vla-decision'), `${vla.layout}:expert-to-risk`).toBe(true);
-      expect(hasDirectedPath(vla.edges, 'vla-decision', 'vla-controller'), `${vla.layout}:risk-to-controller`).toBe(true);
-      expect(hasDirectedPath(vla.edges, 'vla-controller', 'vla-reobserve'), `${vla.layout}:time-unfolded-rollout`).toBe(true);
-      const reobserveFeedback = vla.edges.find((edge) => edge.source === 'vla-reobserve' && edge.target === 'vla-camera-front');
-      expect(reobserveFeedback, `${vla.layout}:reobserve-feedback`).toBeDefined();
-      expect(reobserveFeedback?.data?.scientificSemantic, `${vla.layout}:reobserve-feedback-semantic`).toBe('feedback');
+
+      const vla = createScientificSchematic(options({ templateId: 'vla-policy', density: 'detailed' }), figure);
+      expect(hasDirectedPath(vla.edges, 'vla-observation', 'vla-execution'), `${vla.layout}:observation-to-execution`).toBe(true);
+      expect(hasDirectedPath(vla.edges, 'vla-state', 'vla-policy'), `${vla.layout}:state-to-policy`).toBe(true);
+      const vlaFeedback = vla.edges.find((edge) => edge.source === 'vla-rollout-c' && edge.target === 'vla-feedback-note');
+      expect(vlaFeedback?.data?.scientificSemantic, `${vla.layout}:observation-feedback-semantic`).toBe('feedback');
+      expect(vlaFeedback?.data?.lineStyle, `${vla.layout}:observation-feedback-style`).toBe('dashed');
 
       const world = createScientificSchematic(options({ templateId: 'world-model-rollout', density: 'detailed' }), figure);
-      const worldIds = new Set(world.nodes.map((node) => node.id));
-      for (const id of ['wm-context', 'wm-encoder', 'wm-model', 'wm-rollout-a', 'wm-rollout-b', 'wm-rollout-c', 'wm-decision', 'wm-action', 'wm-reobserve', 'wm-error', 'wm-update', 'wm-next-belief', 'wm-baseline']) {
-        expect(worldIds.has(id), `${world.layout}:${id}`).toBe(true);
+      for (const candidate of ['wm-rollout-safe', 'wm-rollout-contact', 'wm-rollout-uncertain']) {
+        expect(hasDirectedPath(world.edges, 'wm-rollout', candidate), `${world.layout}:fan-out:${candidate}`).toBe(true);
+        expect(hasDirectedPath(world.edges, candidate, 'wm-score'), `${world.layout}:risk-score:${candidate}`).toBe(true);
       }
-      expect(hasDirectedPath(world.edges, 'wm-context', 'wm-encoder'), `${world.layout}:context-to-encoder`).toBe(true);
-      expect(hasDirectedPath(world.edges, 'wm-encoder', 'wm-model'), `${world.layout}:encoder-to-model`).toBe(true);
-      for (const id of ['wm-rollout-a', 'wm-rollout-b', 'wm-rollout-c']) {
-        expect(hasDirectedPath(world.edges, 'wm-model', id), `${world.layout}:model-to-${id}`).toBe(true);
-        expect(hasDirectedPath(world.edges, id, 'wm-decision'), `${world.layout}:${id}-to-decision`).toBe(true);
-      }
-      expect(hasDirectedPath(world.edges, 'wm-decision', 'wm-action'), `${world.layout}:decision-to-action`).toBe(true);
-      expect(hasDirectedPath(world.edges, 'wm-action', 'wm-reobserve'), `${world.layout}:action-to-observation`).toBe(true);
-      expect(hasDirectedPath(world.edges, 'wm-reobserve', 'wm-error'), `${world.layout}:observation-to-residual`).toBe(true);
-      expect(hasDirectedPath(world.edges, 'wm-error', 'wm-update'), `${world.layout}:residual-to-update`).toBe(true);
-      expect(hasDirectedPath(world.edges, 'wm-update', 'wm-next-belief'), `${world.layout}:belief-update-loop`).toBe(true);
-      expect(world.edges.some((edge) => edge.source === 'wm-update' && edge.target === 'wm-model'), `${world.layout}:weights-fixed`).toBe(false);
-      expect(hasDirectedPath(world.edges, 'wm-baseline', 'wm-action'), `${world.layout}:baseline-isolation`).toBe(false);
-      expect(world.edges.filter((edge) => edge.source === 'wm-baseline' || edge.target === 'wm-baseline').every((edge) => edge.data?.lineStyle === 'dotted'), `${world.layout}:baseline-style`).toBe(true);
-      const rolloutLabels = ['wm-rollout-a', 'wm-rollout-b', 'wm-rollout-c'].map((id) => world.nodes.find((candidate) => candidate.id === id)?.data.label);
-      expect(rolloutLabels, `${world.layout}:concise-rollout-labels`).toEqual(['A', 'B', 'C']);
-      const worldCopy = world.nodes.map((node) => `${node.data.label} ${node.data.description ?? ''}`).join(' ').toLowerCase();
-      expect(worldCopy, `${world.layout}:goal-cost`).toContain('goal');
-      expect(worldCopy, `${world.layout}:contact-cost`).toContain('contact');
-      expect(worldCopy, `${world.layout}:epistemic-cost`).toContain('epistemic');
-      for (const [source, target] of [['wm-decision', 'wm-action'], ['wm-action', 'wm-reobserve'], ['wm-reobserve', 'wm-error'], ['wm-error', 'wm-update'], ['wm-update', 'wm-next-belief']] as const) {
-      expect(world.edges.find((edge) => edge.source === source && edge.target === target)?.data?.lineStyle, `${world.layout}:${source}-${target}-solid`).toBe('solid');
-      }
-      expect(world.edges.some((edge) => edge.source === 'wm-next-belief' && edge.target === 'wm-encoder'), `${world.layout}:next-cycle-feedback`).toBe(true);
-      const rolloutFanout = world.nodes.find((node) => node.id === 'wm-rollout-fanout');
-      if (rolloutFanout) expect(rolloutFanout.data.kind, `${world.layout}:broadcast-not-sum`).toBe('on-page-connector');
-      expect(world.nodes.find((node) => node.id === 'wm-stage-rollout')?.data.label, `${world.layout}:illustrative-rollouts`).toContain('Illustrative');
+      expect(hasDirectedPath(world.edges, 'wm-score', 'wm-residual'), `${world.layout}:decision-to-residual`).toBe(true);
+      const beliefFeedback = world.edges.filter((edge) => edge.target === 'wm-update');
+      expect(beliefFeedback.length, `${world.layout}:belief-update-inputs`).toBe(1);
+      expect(beliefFeedback[0]?.data?.scientificSemantic, `${world.layout}:belief-feedback-semantic`).toBe('feedback');
+      expect(beliefFeedback[0]?.data?.lineStyle, `${world.layout}:belief-feedback-style`).toBe('dashed');
 
       const llm = createScientificSchematic(options({ templateId: 'llm-training-pipeline', density: 'detailed' }), figure);
-      const llmIds = new Set(llm.nodes.map((node) => node.id));
-      for (const id of ['lt-instruction-data', 'lt-sft-objective', 'lt-sft-model', 'lt-preference-data', 'lt-dpo-objective', 'lt-dpo-checkpoint', 'lt-implicit-reward', 'lt-rlhf-objective', 'lt-reward-model', 'lt-rollout', 'lt-ppo-loop', 'lt-deploy-model', 'lt-release-gate']) {
-        expect(llmIds.has(id), `${llm.layout}:${id}`).toBe(true);
-      }
-      expect(hasDirectedPath(llm.edges, 'lt-instruction-data', 'lt-sft-model'), `${llm.layout}:instructions-to-sft`).toBe(true);
-      expect(hasDirectedPath(llm.edges, 'lt-sft-objective', 'lt-sft-model'), `${llm.layout}:objective-to-sft`).toBe(true);
-      expect(hasDirectedPath(llm.edges, 'lt-preference-data', 'lt-dpo-objective'), `${llm.layout}:prefs-to-dpo`).toBe(true);
-      expect(hasDirectedPath(llm.edges, 'lt-sft-model', 'lt-dpo-objective'), `${llm.layout}:reference-to-dpo`).toBe(true);
-      expect(hasDirectedPath(llm.edges, 'lt-dpo-objective', 'lt-dpo-checkpoint'), `${llm.layout}:dpo-optimization`).toBe(true);
-      expect(hasDirectedPath(llm.edges, 'lt-dpo-checkpoint', 'lt-deploy-model'), `${llm.layout}:checkpoint-to-deployment`).toBe(true);
-      const dpoOptimization = llm.edges.find((edge) => edge.source === 'lt-dpo-objective' && edge.target === 'lt-dpo-checkpoint');
-      expect(dpoOptimization?.data?.lineStyle, `${llm.layout}:gradient-style`).toBe('dashed');
-      expect(dpoOptimization?.data?.scientificSemantic, `${llm.layout}:gradient-semantic`).toBe('gradient');
-      expect(dpoOptimization?.label, `${llm.layout}:optimization-label`).toBe('optimize');
-      const freezeCheckpoint = llm.edges.find((edge) => edge.source === 'lt-dpo-checkpoint' && edge.target === 'lt-deploy-model');
-      expect(freezeCheckpoint?.data?.lineStyle, `${llm.layout}:checkpoint-style`).toBe('solid');
-      expect(freezeCheckpoint?.label, `${llm.layout}:checkpoint-label`).toMatch(/freeze/);
-      expect(llm.edges.some((edge) => edge.source === 'lt-implicit-reward' || edge.target === 'lt-implicit-reward'), `${llm.layout}:implicit-reward-annotation`).toBe(false);
-      const implicitReward = llm.nodes.find((node) => node.id === 'lt-implicit-reward');
-      expect(`${implicitReward?.data.label ?? ''} ${implicitReward?.data.description ?? ''}`, `${llm.layout}:diagnostic-reward`).toMatch(/diagnostic/);
-      const baselineIds = new Set(['lt-rlhf-objective', 'lt-reward-model', 'lt-rollout', 'lt-ppo-loop', 'lt-rlhf-checkpoint']);
-      const baselineEdges = llm.edges.filter((edge) => baselineIds.has(edge.source) || baselineIds.has(edge.target));
-      expect(baselineEdges.length, `${llm.layout}:baseline-edges`).toBeGreaterThan(0);
-      expect(baselineEdges.every((edge) => edge.data?.lineStyle === 'dotted'), `${llm.layout}:baseline-style`).toBe(true);
-      for (const id of baselineIds) {
-        if (llmIds.has(id)) expect(hasDirectedPath(llm.edges, id, 'lt-deploy-model'), `${llm.layout}:${id}-deployment-isolation`).toBe(false);
-      }
-      if (llm.layout === 'presentation') {
-        expect(baselineEdges.every((edge) => baselineIds.has(edge.source) && baselineIds.has(edge.target)), 'presentation:isolated-baseline-inset').toBe(true);
-      }
-
-      for (const schematic of [vla, world, llm]) {
-        const visibleText = schematic.nodes.map((node) => `${node.data.label} ${node.data.description ?? ''}`).join('\n');
-        expect(visibleText, `${schematic.templateId}:${schematic.layout}:math-typography`)
-          .not.toMatch(/theta_|r_phi|L_NLL|z_hat|L_pred|\bbeta\b/);
-      }
+      expect(hasDirectedPath(llm.edges, 'llm-base', 'llm-gate'), `${llm.layout}:base-to-release`).toBe(true);
+      expect(hasDirectedPath(llm.edges, 'llm-prompt', 'llm-objective'), `${llm.layout}:preference-to-objective`).toBe(true);
+      const preferenceUpdate = llm.edges.find((edge) => edge.source === 'llm-objective' && edge.target === 'llm-policy');
+      expect(preferenceUpdate?.data?.scientificSemantic, `${llm.layout}:objective-gradient-semantic`).toBe('gradient');
+      const optionalBaseline = llm.edges.filter((edge) => edge.data?.scientificSemantic === 'optional');
+      expect(optionalBaseline.length, `${llm.layout}:baseline-edges`).toBe(4);
+      expect(optionalBaseline.every((edge) => edge.data?.lineStyle === 'dotted'), `${llm.layout}:baseline-style`).toBe(true);
+      expect(hasDirectedPath(llm.edges, 'llm-ppo', 'llm-gate'), `${llm.layout}:optional-baseline-to-release`).toBe(true);
     }
   });
 
-  it('exports phase backgrounds before edges and foreground modules', () => {
+  it('exports V5 phase backgrounds before edges and foreground modules', () => {
     const figure: ScientificFigureSpec = {
       widthMm: 180,
       heightMm: 120,
@@ -404,70 +368,25 @@ describe('scientific schematic templates', () => {
       background: 'transparent',
       updatedAt: '2026-07-28T00:00:00.000Z',
     };
-    const schematic = createScientificSchematic(options({ templateId: 'vla-policy' }), figure);
-    const svg = serializePublicationSvg(schematic.title, schematic.nodes, schematic.edges, figure);
-    const phaseIndex = svg.indexOf('data-flowloom-node-id="vla-stage-input"');
-    const edgeIndex = svg.indexOf('<defs><marker');
-    const foregroundIndex = svg.indexOf('data-flowloom-node-id="vla-camera-front"', edgeIndex);
+    for (const [templateId, phaseId, foregroundId] of [
+      ['vla-policy', 'vla-01', 'vla-observation'],
+      ['world-model-rollout', 'wm-01', 'wm-scene'],
+      ['llm-training-pipeline', 'llm-01', 'llm-base'],
+    ] as const) {
+      const schematic = createScientificSchematic(options({ templateId }), figure);
+      const svg = serializePublicationSvg(schematic.title, schematic.nodes, schematic.edges, figure);
+      const phaseIndex = svg.indexOf(`data-flowloom-node-id="${phaseId}"`);
+      const edgeIndex = svg.indexOf('data-flowloom-edge-id=');
+      const foregroundIndex = svg.indexOf(`data-flowloom-node-id="${foregroundId}"`);
 
-    expect(phaseIndex).toBeGreaterThan(0);
-    expect(edgeIndex).toBeGreaterThan(phaseIndex);
-    expect(foregroundIndex).toBeGreaterThan(edgeIndex);
-    expect(svg).toContain('2406.09246');
-  });
-
-  it('keeps responsive flagship phase headings on whole words in SVG', () => {
-    const figure: ScientificFigureSpec = {
-      widthMm: 180,
-      heightMm: 120,
-      dpi: 300,
-      rows: 1,
-      columns: 1,
-      marginMm: 6,
-      gapMm: 0,
-      panelLabels: false,
-      labelStyle: 'uppercase',
-      background: '#ffffff',
-      updatedAt: '2026-07-28T00:00:00.000Z',
-    };
-    const schematic = createScientificSchematic(options({ templateId: 'world-model-rollout' }), figure);
-    const svg = serializePublicationSvg(schematic.title, schematic.nodes, schematic.edges, figure);
-    const document = new DOMParser().parseFromString(svg, 'image/svg+xml');
-    const heading = document.querySelector('[data-flowloom-node-id="wm-stage-rollout"] text');
-
-    expect(Array.from(heading?.querySelectorAll('tspan') ?? []).map((line) => line.textContent)).toEqual([
-      'C Illustrative rollouts',
-    ]);
-    expect(heading?.hasAttribute('stroke')).toBe(false);
-    expect(heading?.hasAttribute('paint-order')).toBe(false);
-  });
-
-  it('keeps presentation outcome descriptions on whole words in rendered SVG tspans', () => {
-    const figure: ScientificFigureSpec = {
-      widthMm: 180,
-      heightMm: 101.25,
-      dpi: 300,
-      rows: 1,
-      columns: 1,
-      marginMm: 6,
-      gapMm: 0,
-      panelLabels: false,
-      labelStyle: 'uppercase',
-      background: '#ffffff',
-      updatedAt: '2026-07-28T00:00:00.000Z',
-    };
-    const schematic = createScientificSchematic(options({ templateId: 'world-model-rollout' }), figure);
-    const svg = serializePublicationSvg(schematic.title, schematic.nodes, schematic.edges, figure);
-    const document = new DOMParser().parseFromString(svg, 'image/svg+xml');
-
-    for (const [nodeId, expected] of [['wm-rollout-b', 'B'], ['wm-rollout-c', 'C']] as const) {
-      const group = document.querySelector(`[data-flowloom-node-id="${nodeId}"]`);
-      const lines = Array.from(group?.querySelectorAll('text tspan') ?? []).map((line) => line.textContent);
-      expect(lines, nodeId).toContain(expected);
+      expect(phaseIndex, `${templateId}:phase-index`).toBeGreaterThan(0);
+      expect(edgeIndex, `${templateId}:edge-index`).toBeGreaterThan(phaseIndex);
+      expect(foregroundIndex, `${templateId}:foreground-index`).toBeGreaterThan(edgeIndex);
+      expect(svg, `${templateId}:editable-metadata`).toContain('data-flowloom-editable');
     }
   });
 
-  it('keeps concise presentation labels inside the same layout used by SVG export', () => {
+  it('keeps V5 presentation headings readable and export-parity exact', () => {
     const figure: ScientificFigureSpec = {
       widthMm: 180,
       heightMm: 101.25,
@@ -481,13 +400,10 @@ describe('scientific schematic templates', () => {
       background: '#ffffff',
       updatedAt: '2026-07-28T00:00:00.000Z',
     };
-    const expectedLabels = {
-      'vla-policy': { 'vla-stage-control': 'D  Receding-horizon MPC', 'vla-controller': 'MPC · K=4' },
-      'world-model-rollout': { 'wm-stage-rollout': 'C  Illustrative rollouts', 'wm-rollout-c': 'C' },
-      'llm-training-pipeline': {
-        'lt-stage-method': 'C  CW-DPO',
-        'lt-stage-baseline': 'E  RM + PPO baseline',
-      },
+    const expectedPhases = {
+      'vla-policy': ['vla-01', 'vla-02', 'vla-03', 'vla-04'],
+      'world-model-rollout': ['wm-01', 'wm-02', 'wm-03', 'wm-04'],
+      'llm-training-pipeline': ['llm-01', 'llm-02', 'llm-03', 'llm-04', 'llm-05'],
     } as const;
 
     for (const templateId of ['vla-policy', 'world-model-rollout', 'llm-training-pipeline'] as const) {
@@ -495,9 +411,7 @@ describe('scientific schematic templates', () => {
       const svg = serializePublicationSvg(schematic.title, schematic.nodes, schematic.edges, figure);
       const document = new DOMParser().parseFromString(svg, 'image/svg+xml');
 
-      for (const [nodeId, label] of Object.entries(expectedLabels[templateId])) {
-        expect(schematic.nodes.find((node) => node.id === nodeId)?.data.label, nodeId).toBe(label);
-      }
+      for (const phaseId of expectedPhases[templateId]) expect(schematic.nodes.some((node) => node.id === phaseId), `${templateId}:${phaseId}`).toBe(true);
       for (const phase of schematic.nodes.filter((node) => node.data.schematicRole === 'phase')) {
         const width = Number(phase.style?.width ?? 0);
         const height = Number(phase.style?.height ?? 0);
@@ -508,6 +422,7 @@ describe('scientific schematic templates', () => {
 
         expect(exportedLines, `${templateId}:${phase.id}:parity`).toEqual(layout.labelLines);
         expect(layout.labelLines.length, `${templateId}:${phase.id}:line-count`).toBeLessThanOrEqual(2);
+        expect(layout.labelLines.some((line) => line.endsWith('...')), `${templateId}:${phase.id}:truncation`).toBe(false);
         for (const line of layout.labelLines) {
           expect(
             estimateSvgTextWidth(line, phase.data.fontSize),
@@ -518,7 +433,7 @@ describe('scientific schematic templates', () => {
     }
   });
 
-  it('keeps flagship comparison and deployment regions visibly separated', () => {
+  it('gives flagship contributions more visual weight than context and optional baselines', () => {
     const singleFigure: ScientificFigureSpec = {
       widthMm: 89,
       heightMm: 70,
@@ -533,13 +448,8 @@ describe('scientific schematic templates', () => {
       updatedAt: '2026-07-28T00:00:00.000Z',
     };
     const talkFigure: ScientificFigureSpec = { ...singleFigure, widthMm: 180, heightMm: 101.25 };
-    const single = createScientificSchematic(options({ templateId: 'llm-training-pipeline' }), singleFigure);
-    const talk = createScientificSchematic(options({ templateId: 'llm-training-pipeline' }), talkFigure);
-    const double = createScientificSchematic(
-      options({ templateId: 'vla-policy' }),
-      { ...singleFigure, widthMm: 180, heightMm: 120 },
-    );
-    const box = (schematic: typeof single, id: string) => {
+    const doubleFigure: ScientificFigureSpec = { ...singleFigure, widthMm: 180, heightMm: 120 };
+    const box = (schematic: ReturnType<typeof createScientificSchematic>, id: string) => {
       const node = schematic.nodes.find((candidate) => candidate.id === id);
       expect(node, id).toBeDefined();
       return {
@@ -549,33 +459,71 @@ describe('scientific schematic templates', () => {
         bottom: node!.position.y + Number(node!.style?.height ?? 0),
       };
     };
+    const area = (value: ReturnType<typeof box>) => (value.right - value.left) * (value.bottom - value.top);
+    const envelope = (schematic: ReturnType<typeof createScientificSchematic>, ids: string[]) => {
+      const boxes = ids.map((id) => box(schematic, id));
+      return {
+        left: Math.min(...boxes.map((value) => value.left)),
+        right: Math.max(...boxes.map((value) => value.right)),
+        top: Math.min(...boxes.map((value) => value.top)),
+        bottom: Math.max(...boxes.map((value) => value.bottom)),
+      };
+    };
+    const contains = (outer: ReturnType<typeof box>, inner: ReturnType<typeof box>) => (
+      inner.left >= outer.left
+      && inner.right <= outer.right
+      && inner.top >= outer.top
+      && inner.bottom <= outer.bottom
+    );
 
-    const methodPanel = box(single, 'lt-method-panel');
-    const baselinePanel = box(single, 'lt-baseline-panel');
-    const dpo = box(single, 'lt-dpo-objective');
-    const dpoCheckpoint = box(single, 'lt-dpo-checkpoint');
-    const deployStage = box(single, 'lt-stage-deploy');
-    expect(baselinePanel.left).toBeGreaterThan(methodPanel.right);
-    expect(dpoCheckpoint.top).toBeGreaterThan(dpo.bottom);
-    expect(dpoCheckpoint.left).toBeGreaterThanOrEqual(methodPanel.left);
-    expect(dpoCheckpoint.right).toBeLessThanOrEqual(methodPanel.right);
-    expect(deployStage.top).toBeGreaterThanOrEqual(Math.min(methodPanel.bottom, baselinePanel.bottom));
-    expect(single.nodes.find((node) => node.id === 'lt-dpo-checkpoint')?.data.label).toBe('Trainable π(θ)');
-    expect(single.nodes.find((node) => node.id === 'lt-implicit-reward')?.data.schematicRole).toBe('annotation');
+    const vlaLayouts = [singleFigure, doubleFigure, talkFigure].map((figure) => (
+      createScientificSchematic(options({ templateId: 'vla-policy' }), figure)
+    ));
+    for (const schematic of vlaLayouts) {
+      const contribution = box(schematic, 'vla-contribution-panel');
+      const context = envelope(schematic, ['vla-observation', 'vla-task', 'vla-state']);
+      const act = envelope(schematic, ['vla-integrator', 'vla-execution', 'vla-trajectory']);
+      const policyArea = area(box(schematic, 'vla-policy'));
+      const supportingAreas = ['vla-tokens', 'vla-backbone', 'vla-object', 'vla-constraints', 'vla-action', 'vla-integrator']
+        .map((id) => area(box(schematic, id)));
 
-    const vlaPhases = double.nodes.filter((node) => node.data.schematicRole === 'phase');
-    expect(new Set(vlaPhases.map((node) => node.data.fontSize)).size).toBe(1);
-    for (const phase of vlaPhases) {
-      const width = Number(phase.style?.width ?? 0);
-      expect(estimateSvgTextWidth(phase.data.label, phase.data.fontSize), phase.id).toBeLessThanOrEqual(width - 12);
+      expect(area(contribution), `${schematic.layout}:contribution-vs-context`).toBeGreaterThan(area(context) * 2);
+      expect(area(contribution), `${schematic.layout}:contribution-vs-act`).toBeGreaterThan(area(act) * 2);
+      expect(policyArea, `${schematic.layout}:policy-focus`).toBeGreaterThan(Math.max(...supportingAreas));
+      for (const legacyId of ['vla-panel-input', 'vla-panel-model', 'vla-panel-action', 'vla-panel-world']) {
+        expect(schematic.nodes.some((node) => node.id === legacyId), `${schematic.layout}:${legacyId}`).toBe(false);
+      }
+      for (const phase of schematic.nodes.filter((node) => node.data.schematicRole === 'phase')) {
+        const width = Number(phase.style?.width ?? 0);
+        expect(estimateSvgTextWidth(phase.data.label, phase.data.fontSize), phase.id).toBeLessThanOrEqual(width - 12);
+      }
     }
 
-    const talkBaseline = box(talk, 'lt-baseline-panel');
-    const talkDeploy = box(talk, 'lt-deploy-model');
-    expect(talkDeploy.left).toBeGreaterThan(talkBaseline.right);
-    expect(talk.nodes.some((node) => node.id === 'lt-method-identity')).toBe(false);
-    expect(talk.nodes.some((node) => node.id === 'lt-claim-note')).toBe(false);
-    expect(hasDirectedPath(talk.edges, 'lt-ppo-loop', 'lt-deploy-model')).toBe(false);
+    for (const figure of [singleFigure, doubleFigure, talkFigure]) {
+      const llm = createScientificSchematic(options({ templateId: 'llm-training-pipeline' }), figure);
+      const alignment = box(llm, 'llm-panel-align');
+      const baseline = box(llm, 'llm-baseline-panel');
+      expect(baseline.top, `${llm.layout}:baseline-position`).toBeGreaterThan(alignment.bottom);
+      expect(area(alignment), `${llm.layout}:alignment-focus`).toBeGreaterThan(area(baseline) * 1.2);
+      for (const id of ['llm-rm', 'llm-rollout', 'llm-ppo']) {
+        expect(contains(baseline, box(llm, id)), `${llm.layout}:baseline-contains-${id}`).toBe(true);
+      }
+      for (const legacyId of ['llm-panel-seed', 'llm-panel-evidence', 'llm-panel-deploy']) {
+        expect(llm.nodes.some((node) => node.id === legacyId), `${llm.layout}:${legacyId}`).toBe(false);
+      }
+      expect(hasDirectedPath(llm.edges, 'llm-ppo', 'llm-gate'), `${llm.layout}:baseline-to-gate`).toBe(true);
+    }
+
+    const worldDouble = createScientificSchematic(options({ templateId: 'world-model-rollout' }), doubleFigure);
+    for (const schematic of [vlaLayouts[1], worldDouble]) {
+      const printImages = schematic.nodes.filter((node) => node.data.kind === 'image');
+      expect(printImages.length, `${schematic.templateId}:${schematic.layout}:print-images`).toBeGreaterThan(0);
+      for (const image of printImages) {
+        expect(image.data.rasterWidthPx, `${schematic.templateId}:${image.id}:raster-width`).toBe(800);
+        expect(image.data.rasterHeightPx, `${schematic.templateId}:${image.id}:raster-height`).toBe(1200);
+        expect(image.data.sourceRef, `${schematic.templateId}:${image.id}:source-ref`).toMatch(/-print\.jpg$/);
+      }
+    }
   });
 
   it('round-trips every flagship layout and palette without losing editable scientific semantics', () => {

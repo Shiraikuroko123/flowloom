@@ -5,6 +5,7 @@ import {
   FLAGSHIP_QUALITY_DIMENSIONS,
   FLAGSHIP_QUALITY_SCORECARDS,
   FLAGSHIP_QUALITY_THRESHOLD,
+  FLAGSHIP_REVIEW_IS_CURRENT,
   FLAGSHIP_TEMPLATE_IDS,
   assessFlagshipQualityScope,
 } from './flagshipQuality';
@@ -31,7 +32,8 @@ const EXPECTED_LAYOUT_TOTALS = {
 } as const;
 
 describe('flagship quality gate', () => {
-  it('records all nine independent layout reviews and gates on the weakest layout', () => {
+  it('keeps historical reviews but does not let an obsolete composition publish a score', () => {
+    expect(FLAGSHIP_REVIEW_IS_CURRENT).toBe(false);
     expect(Object.keys(FLAGSHIP_QUALITY_SCORECARDS)).toEqual([...FLAGSHIP_TEMPLATE_IDS]);
     for (const templateId of FLAGSHIP_TEMPLATE_IDS) {
       const scorecard = FLAGSHIP_QUALITY_SCORECARDS[templateId];
@@ -52,27 +54,25 @@ describe('flagship quality gate', () => {
         expect(review.totalScore, `${templateId}:${review.layout}:threshold`).toBeGreaterThanOrEqual(FLAGSHIP_QUALITY_THRESHOLD);
         expect(review.passed, `${templateId}:${review.layout}:passed`).toBe(true);
       }
-      expect(scorecard.totalScore, `${templateId}:weakest-layout`).toBe(
-        Math.min(...scorecard.layoutReviews.map((review) => review.totalScore)),
-      );
+      expect(scorecard.totalScore, `${templateId}:superseded-score`).toBe(0);
       expect(scorecard.dimensions.every((item) => item.maxScore === 100), templateId).toBe(true);
       expect(scorecard.dimensions.every((item) => item.score >= FLAGSHIP_QUALITY_THRESHOLD), templateId).toBe(true);
       expect(scorecard.dimensions.every((item) => item.evidence.trim().length > 0), templateId).toBe(true);
       expect(scorecard.criticalFindings, templateId).toBe(0);
       expect(scorecard.majorFindings, templateId).toBe(0);
-      expect(scorecard.passed, templateId).toBe(true);
-      expect(scorecard.superseded, templateId).toBe(false);
+      expect(scorecard.passed, templateId).toBe(false);
+      expect(scorecard.superseded, templateId).toBe(true);
     }
     expect(FLAGSHIP_MINIMUM_DIMENSION_RATIO).toBe(0.7);
   });
 
-  it('marks the exact signed-off conference matrix as independently reviewed', () => {
+  it('marks the refreshed conference matrix as awaiting independent review', () => {
     const layouts: ScientificSchematicLayout[] = ['single-column', 'double-column', 'presentation'];
     for (const templateId of FLAGSHIP_TEMPLATE_IDS) {
       for (const layout of layouts) {
         const result = assessFlagshipQualityScope(auditedOptions(templateId), layout);
-        expect(result.status, `${templateId}:${layout}`).toBe('reviewed');
-        expect(result.reasons.join(' '), `${templateId}:${layout}:score`).toContain('/100');
+        expect(result.status, `${templateId}:${layout}`).toBe('requires-review');
+        expect(result.reasons.join(' '), `${templateId}:${layout}:review`).toContain('质量门禁');
       }
     }
   });

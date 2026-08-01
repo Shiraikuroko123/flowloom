@@ -11,6 +11,9 @@ import {
 export const FLAGSHIP_QUALITY_THRESHOLD = 95;
 export const FLAGSHIP_MINIMUM_DIMENSION_RATIO = 0.7;
 export const FLAGSHIP_QUALITY_RUBRIC_VERSION = 'independent-six-axis-2026.07.30';
+// The V5 composition system intentionally supersedes the signed-off V4
+// snapshots. A score is only published again after a fresh read-only review.
+export const FLAGSHIP_REVIEW_IS_CURRENT = false;
 
 export const FLAGSHIP_TEMPLATE_IDS = [
   'vla-policy',
@@ -152,19 +155,23 @@ function buildReviewedScorecard(templateId: FlagshipTemplateId): FlagshipQuality
       evidence: `${DIMENSION_EVIDENCE[dimension.id]} Lowest observed score: ${score}/100 (${weakestLayouts}).`,
     };
   });
-  const totalScore = Math.min(...layoutReviews.map((review) => review.totalScore));
+  const totalScore = FLAGSHIP_REVIEW_IS_CURRENT
+    ? Math.min(...layoutReviews.map((review) => review.totalScore))
+    : 0;
   const dimensionsMeetFloor = dimensions.every((dimension) => (
     dimension.score / dimension.maxScore >= FLAGSHIP_MINIMUM_DIMENSION_RATIO
   ));
-  const passed = layoutReviews.every((review) => review.passed) && dimensionsMeetFloor;
+  const passed = FLAGSHIP_REVIEW_IS_CURRENT && layoutReviews.every((review) => review.passed) && dimensionsMeetFloor;
   return {
     templateId,
     name: reviewed.name,
     rubricVersion: FLAGSHIP_QUALITY_RUBRIC_VERSION,
-    reviewedAt: '2026-07-30',
-    reviewer: 'Lagrange, independent read-only reviewer agent',
-    reviewedRevision: 'publication-evidence-2026-07-30T12:52:22+08:00',
-    scope: 'Blind review of the default English detailed conference export in single-column, double-column, and presentation layouts. Total score is the weakest layout, not an average across layouts.',
+    reviewedAt: FLAGSHIP_REVIEW_IS_CURRENT ? '2026-07-30' : '',
+    reviewer: FLAGSHIP_REVIEW_IS_CURRENT ? 'Lagrange, independent read-only reviewer agent' : 'Awaiting independent read-only review',
+    reviewedRevision: FLAGSHIP_REVIEW_IS_CURRENT ? 'publication-evidence-2026-07-30T12:52:22+08:00' : 'V5 composition refresh',
+    scope: FLAGSHIP_REVIEW_IS_CURRENT
+      ? 'Blind review of the default English detailed conference export in single-column, double-column, and presentation layouts. Total score is the weakest layout, not an average across layouts.'
+      : 'The V4 scorecard is superseded. The V5 default English detailed conference matrix is awaiting independent review.',
     layoutReviews,
     dimensions,
     totalScore,
@@ -172,7 +179,7 @@ function buildReviewedScorecard(templateId: FlagshipTemplateId): FlagshipQuality
     criticalFindings: 0,
     majorFindings: 0,
     passed,
-    superseded: false,
+    superseded: !FLAGSHIP_REVIEW_IS_CURRENT,
   };
 }
 

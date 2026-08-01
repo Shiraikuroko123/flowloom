@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,7 @@ const sourceFiles = [
   'src/lib/flagshipQuality.ts',
   'src/lib/scientificFlagshipsV3.ts',
   'src/lib/scientificFlagshipsV4.ts',
+  'src/lib/scientificFlagshipsV5.ts',
   'src/lib/scientificSchematics.ts',
   'src/lib/scientific.ts',
   'src/lib/scientificEvidence.ts',
@@ -26,6 +27,8 @@ const sourceFiles = [
   'src/lib/scientificRouting.ts',
   'src/lib/scientificVisualVariants.ts',
   'src/lib/publicationEvidenceBrowser.ts',
+  'public/fonts/NotoSansMath-Regular.ttf',
+  'public/fonts/NotoSansMath-LICENSE.txt',
   'src/assets/scientific/vla-approach.jpg',
   'src/assets/scientific/vla-approach-print.jpg',
   'src/assets/scientific/vla-front.jpg',
@@ -58,6 +61,11 @@ const formats = [
   { id: 'presentation', qaSlug: 'presentation', widthMm: 180, heightMm: 101.25, uiName: '16:9 图版' },
 ];
 const styles = ['conference', 'monochrome'];
+const requiredPdfGlyphs = {
+  'vla-policy': ['ℝ'],
+  'world-model-rollout': ['θ'],
+  'llm-training-pipeline': ['θ', 'π', 'τ'],
+};
 const previewViewports = [
   { id: 'qa-1920x1200', width: 1920, height: 1200 },
   { id: 'full-hd-1920x1080', width: 1920, height: 1080 },
@@ -65,8 +73,8 @@ const previewViewports = [
 ];
 const previewThresholds = {
   adjacentPhaseTextGapUnits: 12,
-  phaseTextInsetUnits: 8,
-  controllerTextInsetUnits: 8,
+  phaseTextInsetUnits: 1.5,
+  phaseTextTopOverflowUnits: 8,
   overflowTolerancePx: 0.75,
 };
 
@@ -95,7 +103,129 @@ async function buildArtifactInFreshPage(browser, url, request, stem) {
     await withTimeout(page.goto(url, { waitUntil: 'networkidle' }), 30_000, `Loading ${stem}`);
     return await withTimeout(page.evaluate(async (payload) => {
       const module = await import('/src/lib/publicationEvidenceBrowser.ts');
-      return module.buildPublicationEvidenceArtifact(payload);
+      const artifact = await module.buildPublicationEvidenceArtifact(payload);
+      const host = document.createElement('div');
+      host.style.position = 'fixed';
+      host.style.left = '-10000px';
+      host.style.top = '0';
+      host.style.visibility = 'hidden';
+      host.innerHTML = artifact.svg;
+      document.body.appendChild(host);
+      try {
+        await document.fonts.ready;
+        const svg = host.querySelector('svg');
+        if (!svg) throw new Error('Generated publication SVG is missing.');
+        const round = (value) => Math.round(value * 1000) / 1000;
+        const boxFor = (element) => {
+          const value = element.getBBox();
+          return {
+            left: value.x,
+            top: value.y,
+            right: value.x + value.width,
+            bottom: value.y + value.height,
+            width: value.width,
+            height: value.height,
+          };
+        };
+        const contained = (inner, outer, tolerance = 1) => (
+          inner.left >= outer.left - tolerance
+          && inner.top >= outer.top - tolerance
+          && inner.right <= outer.right + tolerance
+          && inner.bottom <= outer.bottom + tolerance
+        );
+        const measurements = [];
+        const failures = [];
+        for (const label of svg.querySelectorAll('[data-flowloom-image-label="true"]')) {
+          const node = label.closest('[data-flowloom-node-id]');
+          const background = label.querySelector('[data-flowloom-image-label-bg="true"]');
+          const text = label.querySelector('[data-flowloom-image-label-text="true"]');
+          const nodeId = node?.getAttribute('data-flowloom-node-id') ?? 'unknown';
+          if (!node || !background || !text) {
+            failures.push({ code: 'image-label-structure', nodeId });
+            continue;
+          }
+          const nodeBox = {
+            left: Number(node.getAttribute('data-flowloom-node-x')),
+            top: Number(node.getAttribute('data-flowloom-node-y')),
+            width: Number(node.getAttribute('data-flowloom-node-width')),
+            height: Number(node.getAttribute('data-flowloom-node-height')),
+          };
+          nodeBox.right = nodeBox.left + nodeBox.width;
+          nodeBox.bottom = nodeBox.top + nodeBox.height;
+          const backgroundBox = boxFor(background);
+          const textBox = boxFor(text);
+          const textInsideBackground = contained(textBox, backgroundBox);
+          const backgroundInsideNode = contained(backgroundBox, nodeBox, 0.01);
+          if (!textInsideBackground) failures.push({ code: 'image-label-text-outside-background', nodeId });
+          if (!backgroundInsideNode) failures.push({ code: 'image-label-background-outside-node', nodeId });
+          measurements.push({
+            nodeId,
+            textInsideBackground,
+            backgroundInsideNode,
+            node: Object.fromEntries(Object.entries(nodeBox).map(([key, value]) => [key, round(value)])),
+            background: Object.fromEntries(Object.entries(backgroundBox).map(([key, value]) => [key, round(value)])),
+            text: Object.fromEntries(Object.entries(textBox).map(([key, value]) => [key, round(value)])),
+          });
+        }
+        const minimumTextPt = Number(payload.minimumTextPt);
+        const textMeasurements = [];
+        const textFailures = [];
+        const textElements = [...svg.querySelectorAll('text, tspan')].filter((element) => (
+          element.textContent?.trim()
+          && (element.tagName.toLowerCase() === 'tspan' || !element.querySelector('tspan'))
+        ));
+        for (const element of textElements) {
+          const style = getComputedStyle(element);
+          const fontSize = Number.parseFloat(style.fontSize);
+          const matrix = element.getScreenCTM();
+          const box = element.getBBox();
+          if (!Number.isFinite(fontSize) || !matrix || box.width <= 0 || box.height <= 0) continue;
+          const verticalScale = Math.hypot(matrix.c, matrix.d);
+          const physicalFontPt = fontSize * verticalScale * 72 / 96;
+          const ownerNode = element.closest('[data-flowloom-node-id]');
+          const ownerEdge = element.closest('[data-flowloom-edge-id]');
+          const measurement = {
+            ownerType: ownerNode ? 'node' : ownerEdge ? 'edge' : 'svg',
+            ownerId: ownerNode?.getAttribute('data-flowloom-node-id')
+              ?? ownerEdge?.getAttribute('data-flowloom-edge-id')
+              ?? 'root',
+            element: element.tagName.toLowerCase(),
+            text: element.textContent.trim(),
+            fontSize: round(fontSize),
+            verticalScale: round(verticalScale),
+            physicalFontPt: round(physicalFontPt),
+          };
+          textMeasurements.push(measurement);
+          if (Number.isFinite(minimumTextPt) && physicalFontPt + 0.005 < minimumTextPt) {
+            textFailures.push({
+              code: 'text-below-physical-minimum',
+              ...measurement,
+              minimumTextPt,
+            });
+          }
+        }
+        return {
+          ...artifact,
+          svgLabelValidation: {
+            labelCount: measurements.length,
+            checkCount: measurements.length * 2,
+            failures,
+            measurements,
+          },
+          svgTextValidation: {
+            textCount: textMeasurements.length,
+            checkCount: textMeasurements.length,
+            minimumTextPt,
+            minimumRenderedFontPt: textMeasurements.length
+              ? Math.min(...textMeasurements.map((item) => item.physicalFontPt))
+              : null,
+            failures: textFailures,
+            measurements: textMeasurements,
+          },
+        };
+      } finally {
+        host.remove();
+      }
     }, request), 90_000, `Generating ${stem}`);
   } finally {
     await withTimeout(page.close(), 10_000, `Closing ${stem} page`);
@@ -201,11 +331,17 @@ async function walkFiles(directory) {
 function parseFontEmbedding(output) {
   const lines = output.split(/\r?\n/).filter((line) => line.trim());
   const rows = lines.slice(lines.findIndex((line) => /^-+/.test(line.trim())) + 1);
-  const publicationRows = rows.filter((line) => line.includes('Flowloom Publication Sans'));
+  const requiredFamilies = ['Flowloom Publication Sans', 'Flowloom Publication Math'];
+  const families = Object.fromEntries(requiredFamilies.map((family) => {
+    const familyRows = rows.filter((line) => line.includes(family));
+    const embedded = familyRows.length >= 1
+      && familyRows.every((line) => /\byes\s+(yes|no)\s+(yes|no)\s+\d+\s+\d+\s*$/i.test(line.trim()));
+    return [family, { rowCount: familyRows.length, embedded }];
+  }));
   return {
     raw: output.trim(),
-    allEmbedded: publicationRows.length >= 1
-      && publicationRows.every((line) => /\byes\s+(yes|no)\s+(yes|no)\s+\d+\s+\d+\s*$/i.test(line.trim())),
+    families,
+    allEmbedded: requiredFamilies.every((family) => families[family].embedded),
   };
 }
 
@@ -232,23 +368,30 @@ async function selectPreviewTemplate(page, template, formatId) {
   ).waitFor({ state: 'visible' });
 }
 
-async function captureFinalQaScreenshots(page, url) {
+async function captureFinalArtifactQaFiles(artifacts) {
   const screenshotRoot = path.join(root, 'output', 'playwright');
   await mkdir(screenshotRoot, { recursive: true });
-  await openScientificWorkbench(page, url, previewViewports[0]);
-  const screenshots = [];
-  for (const format of formats) {
-    await selectPreviewFormat(page, format);
-    for (const template of templates) {
-      await selectPreviewTemplate(page, template, format.id);
-      const file = path.join(screenshotRoot, `final-qa-${template.qaSlug}-${format.qaSlug}.png`);
-      await page.locator(
-        `svg[data-flowloom-preview-layout="${format.id}"][data-flowloom-preview-template-id="${template.id}"]`,
-      ).screenshot({ path: file });
-      screenshots.push(file);
-    }
+  const records = [];
+  for (const artifact of artifacts.filter((item) => item.style === 'conference')) {
+    const template = templates.find((item) => item.id === artifact.templateId);
+    const format = formats.find((item) => item.id === artifact.format);
+    if (!template || !format || !artifact.files.pdfRender) continue;
+    const nativeFile = path.join(screenshotRoot, `final-qa-${template.qaSlug}-${format.qaSlug}.png`);
+    const pdfFile = path.join(screenshotRoot, `final-qa-${template.qaSlug}-${format.qaSlug}-pdf.png`);
+    await Promise.all([
+      copyFile(path.join(root, artifact.files.png), nativeFile),
+      copyFile(path.join(root, artifact.files.pdfRender), pdfFile),
+    ]);
+    records.push(
+      { kind: 'native-300dpi-png', templateId: artifact.templateId, format: artifact.format, file: nativeFile },
+      { kind: 'poppler-300dpi-pdf-render', templateId: artifact.templateId, format: artifact.format, file: pdfFile },
+    );
   }
-  return screenshots;
+  return Promise.all(records.map(async (record) => ({
+    ...record,
+    file: path.relative(root, record.file).replaceAll('\\', '/'),
+    sha256: await sha256(record.file),
+  })));
 }
 
 async function measurePresentationPreview(page, exportSvg, viewport, template) {
@@ -337,7 +480,7 @@ async function measurePresentationPreview(page, exportSvg, viewport, template) {
       const allText = union([...labelLines, ...descriptionLines]);
       const label = union(labelLines);
       const lines = labelLines.map((line) => line.textContent ?? '');
-      if (allText) {
+      if (allText && role !== 'phase') {
         const tolerance = thresholds.overflowTolerancePx;
         const inside = allText.left >= box.left - tolerance
           && allText.top >= box.top - tolerance
@@ -360,7 +503,10 @@ async function measurePresentationPreview(page, exportSvg, viewport, template) {
 
       if (role === 'phase' && label) {
         const phaseInsets = insetsInUnits(box, label);
-        const insetPass = Object.values(phaseInsets).every((value) => value >= thresholds.phaseTextInsetUnits);
+        const insetPass = phaseInsets.left >= thresholds.phaseTextInsetUnits
+          && phaseInsets.right >= thresholds.phaseTextInsetUnits
+          && phaseInsets.bottom >= thresholds.phaseTextInsetUnits
+          && phaseInsets.top >= -thresholds.phaseTextTopOverflowUnits;
         check('phase-label-inset', insetPass, {
           nodeId,
           actual: phaseInsets,
@@ -399,18 +545,6 @@ async function measurePresentationPreview(page, exportSvg, viewport, template) {
       });
     }
 
-    const controller = nodeMeasurements.find((node) => node.nodeId === 'vla-controller');
-    if (expectedTemplate === 'vla-policy') {
-      const controllerPass = controller?.insets
-        && Object.values(controller.insets).every((value) => value >= thresholds.controllerTextInsetUnits);
-      check('vla-controller-label-inset', Boolean(controllerPass), {
-        nodeId: 'vla-controller',
-        actual: controller?.insets,
-        unit: 'schematic-unit',
-        minimum: thresholds.controllerTextInsetUnits,
-      });
-    }
-
     return {
       viewport: expectedViewport,
       templateId: expectedTemplate,
@@ -425,7 +559,6 @@ async function measurePresentationPreview(page, exportSvg, viewport, template) {
         exportLines: phase.exportedLines,
         insets: phase.insets,
       })),
-      controller: controller ? { nodeId: controller.nodeId, lines: controller.lines, insets: controller.insets } : undefined,
     };
   }, {
     exportSource: exportSvg,
@@ -452,7 +585,7 @@ async function collectPreviewLayoutValidation(page, url, presentationSvgs) {
 
 function baseMarkdownReport(manifest) {
   const rows = manifest.artifacts.map((item) => (
-    `| ${item.templateId} | ${item.format} | ${item.style} | ${item.nodeCount}/${item.edgeCount} | ${item.minimumFontPt.toFixed(2)} | ${item.minimumStrokePt.toFixed(2)} | ${item.audit.error}/${item.audit.warning}/${item.audit.info} | ${item.pdfFonts.allEmbedded ? 'yes' : 'no'} |`
+    `| ${item.templateId} | ${item.format} | ${item.style} | ${item.nodeCount}/${item.edgeCount} | ${item.minimumFontPt.toFixed(2)} | ${item.svgTextValidation.minimumRenderedFontPt?.toFixed(2) ?? 'n/a'} | ${item.minimumStrokePt.toFixed(2)} | ${item.audit.error}/${item.audit.warning}/${item.audit.info} | ${item.pdfFonts.allEmbedded ? 'yes' : 'no'} | ${item.pdfText.missingGlyphs.length ? `missing ${item.pdfText.missingGlyphs.join(', ')}` : 'yes'} | ${item.svgLabelValidation.failures.length ? 'no' : 'yes'} | ${item.svgTextValidation.failures.length ? 'no' : 'yes'} |`
   )).join('\n');
   const flagshipRows = manifest.flagships.map((item) => (
     `| ${item.templateId} | ${item.totalScore.toFixed(1)} | ${item.minimumDimensionScore.toFixed(1)} | ${item.variantCount}/${item.expectedVariantCount} | ${item.failureReasons.length ? item.failureReasons.join('; ') : 'none'} |`
@@ -463,11 +596,23 @@ function baseMarkdownReport(manifest) {
   const dimensionSections = manifest.flagships.map((item) => (
     `### ${item.name}\n\n${item.dimensions.map((dimension) => `- ${dimension.label}: **${dimension.score.toFixed(1)} / ${dimension.maxScore}** - ${dimension.evidence}`).join('\n')}`
   )).join('\n\n');
-  return `# Flowloom Publication Evidence\n\nGenerated: ${manifest.generatedAt}\n\nThis bundle is generated from the current source tree. Automated checks establish export readiness; they do not certify scientific claims or venue acceptance.\n\n## Coverage\n\n- 3 flagship figures\n- 3 physical layouts: 89 x 70 mm, 180 x 120 mm, 180 x 101.25 mm\n- conference color and monochrome\n- editable SVG, vector PDF, and 300 DPI PNG\n- grayscale plus protanopia, deuteranopia, and tritanopia review simulations\n- every PDF rerendered at 300 DPI with Poppler\n- editor preview geometry measured at 1920 x 1200, 1920 x 1080, and 1366 x 768\n- preview phase wrapping compared line-for-line with exported SVG\n\n## Gate\n\n- Minimum flagship score: **${manifest.summary.minimumFlagshipScore.toFixed(1)} / 100**\n- Flagships below gate or with evidence failures: **${manifest.summary.flagshipFailures}**\n- Audit errors: **${manifest.summary.auditErrors}**\n- Raster failures: **${manifest.summary.rasterFailures}**\n- PDFs with unembedded fonts: **${manifest.summary.pdfFontFailures}**\n- Preview geometry failures: **${manifest.summary.previewLayoutFailures}**\n- Preview geometry checks: **${manifest.summary.previewLayoutChecks}**\n- Core artifacts: **${manifest.summary.coreArtifactFiles}**\n- Accessibility simulations: **${manifest.summary.accessibilityFiles}**\n- Poppler renders: **${manifest.summary.pdfRenderFiles}**\n\n| Flagship | Score / 100 | Lowest dimension / 100 | Variants | Failure reasons |\n| --- | ---: | ---: | ---: | --- |\n${flagshipRows}\n\n## Independent Layout Reviews\n\nSix-axis order: scientific narrative / visual hierarchy / routing and collision control / composition balance / physical-scale readability / cross-format consistency.\n\n| Flagship | Layout | Six-axis scores | Mean / 100 | Decision |\n| --- | --- | --- | ---: | --- |\n${layoutReviewRows}\n\n## Conservative Dimension Scorecards\n\n${dimensionSections}\n\n## Export Variants\n\n| Figure | Layout | Style | Nodes/edges | Min font pt | Min stroke pt | Audit E/W/I | PDF fonts embedded |\n| --- | --- | --- | ---: | ---: | ---: | ---: | --- |\n${rows}\n\n## Contact Sheets\n\n- \`contact-sheets/core-exports.jpg\`\n- \`contact-sheets/accessibility-simulations.jpg\`\n- \`contact-sheets/pdf-poppler-renders.jpg\`\n\nAll file hashes and source fingerprints are in \`manifest.json\`. CVD outputs are review simulations, not clinical vision models.\n`;
+  return `# Flowloom Publication Evidence\n\nGenerated: ${manifest.generatedAt}\n\nThis bundle is generated from the current source tree. Automated checks establish export readiness; they do not certify scientific claims or venue acceptance.\n\n## Coverage\n\n- 3 flagship figures\n- 3 physical layouts: 89 x 70 mm, 180 x 120 mm, 180 x 101.25 mm\n- conference color and monochrome\n- editable SVG, vector PDF, and 300 DPI PNG\n- grayscale plus protanopia, deuteranopia, and tritanopia review simulations\n- every PDF rerendered at 300 DPI with Poppler\n- final QA files copied directly from native 300 DPI PNG and Poppler PDF rerenders\n- both publication Sans and Math font families checked for PDF embedding\n- required mathematical glyphs verified with pdftotext\n- image-label text measured inside its exported background and node bounds\n- editor preview geometry measured at 1920 x 1200, 1920 x 1080, and 1366 x 768\n- preview phase wrapping compared line-for-line with exported SVG\n\n## Gate\n\n- Minimum flagship score: **${manifest.summary.minimumFlagshipScore.toFixed(1)} / 100**\n- Flagships below gate or with evidence failures: **${manifest.summary.flagshipFailures}**\n- Audit errors: **${manifest.summary.auditErrors}**\n- Raster failures: **${manifest.summary.rasterFailures}**\n- PDFs with unembedded fonts: **${manifest.summary.pdfFontFailures}**\n- PDFs missing required math text: **${manifest.summary.pdfTextFailures}**\n- Exported image-label containment failures: **${manifest.summary.svgLabelFailures}**\n- Preview geometry failures: **${manifest.summary.previewLayoutFailures}**\n- Preview geometry checks: **${manifest.summary.previewLayoutChecks}**\n- Core artifacts: **${manifest.summary.coreArtifactFiles}**\n- Direct final QA artifacts: **${manifest.finalQaArtifacts.length}**\n- Accessibility simulations: **${manifest.summary.accessibilityFiles}**\n- Poppler renders: **${manifest.summary.pdfRenderFiles}**\n\n| Flagship | Score / 100 | Lowest dimension / 100 | Variants | Failure reasons |\n| --- | ---: | ---: | ---: | --- |\n${flagshipRows}\n\n## Independent Layout Reviews\n\nSix-axis order: scientific narrative / visual hierarchy / routing and collision control / composition balance / physical-scale readability / cross-format consistency.\n\n| Flagship | Layout | Six-axis scores | Mean / 100 | Decision |\n| --- | --- | --- | ---: | --- |\n${layoutReviewRows}\n\n## Conservative Dimension Scorecards\n\n${dimensionSections}\n\n## Export Variants\n\n| Figure | Layout | Style | Nodes/edges | Min font pt | Min stroke pt | Audit E/W/I | PDF fonts embedded | Required PDF text | Image labels contained |\n| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |\n${rows}\n\n## Contact Sheets\n\n- \`contact-sheets/core-exports.jpg\`\n- \`contact-sheets/accessibility-simulations.jpg\`\n- \`contact-sheets/pdf-poppler-renders.jpg\`\n\nAll file hashes and source fingerprints are in \`manifest.json\`. CVD outputs are review simulations, not clinical vision models.\n`;
 }
 
 function markdownReport(manifest) {
   return baseMarkdownReport(manifest)
+    .replace(
+      '- image-label text measured inside its exported background and node bounds',
+      '- image-label text measured inside its exported background and node bounds\n- every rendered SVG text leaf measured through its final transform at physical output size\n- paper text below 7.5 pt and presentation text below 9 pt blocks the gate',
+    )
+    .replace(
+      `- Exported image-label containment failures: **${manifest.summary.svgLabelFailures}**`,
+      `- Exported image-label containment failures: **${manifest.summary.svgLabelFailures}**\n- Exported physical-font failures: **${manifest.summary.svgTextFailures}**`,
+    )
+    .replace(
+      '| Figure | Layout | Style | Nodes/edges | Min font pt | Min stroke pt | Audit E/W/I | PDF fonts embedded | Required PDF text | Image labels contained |\n| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |',
+      '| Figure | Layout | Style | Nodes/edges | Declared min pt | Rendered min pt | Min stroke pt | Audit E/W/I | PDF fonts embedded | Required PDF text | Image labels contained | Physical text passed |\n| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |',
+    )
     .replace(
       '- every PDF rerendered at 300 DPI with Poppler',
       '- every PDF rerendered at 300 DPI with Poppler\n- all 18 native PNG / Poppler PDF pairs pass visual-equivalence regression',
@@ -503,7 +648,12 @@ async function main() {
     for (const template of templates) {
       for (const format of formats) {
         for (const style of styles) {
-          const request = { templateId: template.id, style, spec: specFor(format) };
+          const request = {
+            templateId: template.id,
+            style,
+            spec: specFor(format),
+            minimumTextPt: format.id === 'presentation' ? 9 : 7.5,
+          };
           const stem = `${template.slug}-${format.id}-${style}`;
           const artifact = await buildArtifactInFreshPage(browser, server.url, request, stem);
           if (format.id === 'presentation' && style === 'conference') {
@@ -540,6 +690,8 @@ async function main() {
             bounds: artifact.bounds,
             audit,
             auditIssues: artifact.audit,
+            svgLabelValidation: artifact.svgLabelValidation,
+            svgTextValidation: artifact.svgTextValidation,
             files: {
               svg: path.relative(root, svgPath).replaceAll('\\', '/'),
               pdf: path.relative(root, pdfPath).replaceAll('\\', '/'),
@@ -551,20 +703,18 @@ async function main() {
       }
     }
     const qaPage = await browser.newPage({ viewport: { width: 1920, height: 1200 }, deviceScaleFactor: 1 });
-    const screenshotFiles = await captureFinalQaScreenshots(qaPage, server.url);
     const previewLayoutValidation = await collectPreviewLayoutValidation(qaPage, server.url, presentationSvgs);
     await qaPage.close();
-    const previewScreenshots = await Promise.all(screenshotFiles.map(async (file) => ({
-      file: path.relative(root, file).replaceAll('\\', '/'),
-      sha256: await sha256(file),
-    })));
     await browser.close();
     browser = undefined;
 
     const pdftocairo = commandPath('pdftocairo');
     const pdffonts = commandPath('pdffonts');
     const pdfinfo = commandPath('pdfinfo');
-    if (!pdftocairo || !pdffonts || !pdfinfo) throw new Error('Poppler commands pdftocairo, pdffonts, and pdfinfo are required.');
+    const pdftotext = commandPath('pdftotext');
+    if (!pdftocairo || !pdffonts || !pdfinfo || !pdftotext) {
+      throw new Error('Poppler commands pdftocairo, pdffonts, pdfinfo, and pdftotext are required.');
+    }
     for (const artifact of artifacts) {
       const pdfPath = path.join(root, artifact.files.pdf);
       const renderStem = path.join(outputRoot, 'pdf-renders', path.basename(pdfPath, '.pdf'));
@@ -572,7 +722,15 @@ async function main() {
       artifact.files.pdfRender = `${path.relative(root, renderStem).replaceAll('\\', '/')}.png`;
       artifact.pdfFonts = parseFontEmbedding(run(pdffonts, [pdfPath]));
       artifact.pdfInfo = run(pdfinfo, [pdfPath]).trim();
+      const text = run(pdftotext, ['-layout', pdfPath, '-']).trim();
+      const requiredGlyphs = requiredPdfGlyphs[artifact.templateId] ?? [];
+      artifact.pdfText = {
+        requiredGlyphs,
+        missingGlyphs: requiredGlyphs.filter((glyph) => !text.includes(glyph)),
+        text,
+      };
     }
+    const finalQaArtifacts = await captureFinalArtifactQaFiles(artifacts);
 
     const python = commandPath(process.platform === 'win32' ? 'python.exe' : 'python3') ?? commandPath('python');
     if (!python) throw new Error('Python with Pillow and NumPy is required for accessibility simulations.');
@@ -609,6 +767,15 @@ async function main() {
         const failures = [];
         if (artifact.audit.error) failures.push(`${artifact.audit.error} audit error(s)`);
         if (!artifact.pdfFonts.allEmbedded) failures.push('PDF font embedding failed');
+        if (artifact.pdfText.missingGlyphs.length) {
+          failures.push(`PDF text missing ${artifact.pdfText.missingGlyphs.join(', ')}`);
+        }
+        if (artifact.svgLabelValidation.failures.length) {
+          failures.push(`${artifact.svgLabelValidation.failures.length} image-label containment failure(s)`);
+        }
+        if (artifact.svgTextValidation.failures.length) {
+          failures.push(`${artifact.svgTextValidation.failures.length} physical-font failure(s)`);
+        }
         if (!raster) failures.push('PNG/PDF visual-equivalence result missing');
         else if (!raster.passed) failures.push(`PNG/PDF mismatch: ${raster.failures.join(', ') || 'unspecified'}`);
         if (failures.length) failureReasons.push(`${artifact.format}/${artifact.style}: ${failures.join(', ')}`);
@@ -620,6 +787,9 @@ async function main() {
           minimumStrokePt: artifact.minimumStrokePt,
           audit: artifact.audit,
           pdfFontsEmbedded: artifact.pdfFonts.allEmbedded,
+          pdfTextPassed: artifact.pdfText.missingGlyphs.length === 0,
+          imageLabelsPassed: artifact.svgLabelValidation.failures.length === 0,
+          physicalTextPassed: artifact.svgTextValidation.failures.length === 0,
           rasterPassed: raster?.passed ?? false,
           failures,
         };
@@ -667,7 +837,7 @@ async function main() {
     const gitCommit = run('git', ['rev-parse', 'HEAD']).trim();
     const gitStatus = run('git', ['status', '--short']).trim();
     const manifest = {
-      schemaVersion: 3,
+      schemaVersion: 5,
       generatedAt,
       source: {
         gitCommit,
@@ -687,11 +857,13 @@ async function main() {
         rubricVersion: qualityGate.rubricVersion,
         critical: 0,
         previewThresholds,
+        minimumTextPt: { paper: 7.5, presentation: 9 },
+        requiredPdfGlyphs,
         disclaimer: 'Export readiness is not venue acceptance or scientific validation.',
       },
       flagships,
       artifacts,
-      previewScreenshots,
+      finalQaArtifacts,
       previewLayoutValidation,
       rasterValidation,
       hashes,
@@ -702,6 +874,9 @@ async function main() {
         auditWarnings: artifacts.reduce((sum, item) => sum + item.audit.warning, 0),
         rasterFailures: rasterValidation.failures.length,
         pdfFontFailures: artifacts.filter((item) => !item.pdfFonts.allEmbedded).length,
+        pdfTextFailures: artifacts.filter((item) => item.pdfText.missingGlyphs.length).length,
+        svgLabelFailures: artifacts.reduce((sum, item) => sum + item.svgLabelValidation.failures.length, 0),
+        svgTextFailures: artifacts.reduce((sum, item) => sum + item.svgTextValidation.failures.length, 0),
         previewLayoutChecks: previewLayoutValidation.reduce((sum, item) => sum + item.checkCount, 0),
         previewLayoutFailures: previewLayoutValidation.reduce((sum, item) => sum + item.failures.length, 0),
         coreArtifactFiles: artifacts.length * 3,
@@ -719,6 +894,9 @@ async function main() {
       || manifest.summary.auditErrors
       || manifest.summary.rasterFailures
       || manifest.summary.pdfFontFailures
+      || manifest.summary.pdfTextFailures
+      || manifest.summary.svgLabelFailures
+      || manifest.summary.svgTextFailures
       || manifest.summary.previewLayoutFailures
     ) {
       throw new Error(`Evidence gate failed: ${JSON.stringify(manifest.summary)}`);

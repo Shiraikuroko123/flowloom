@@ -32,6 +32,7 @@ export const PUBLICATION_TYPOGRAPHY = {
   annotation: 24,
   edgeLabel: 22,
 } as const;
+export const SCIENTIFIC_DESCRIPTION_MIN_FONT_SIZE = 8;
 export const PUBLICATION_STROKES = {
   primary: 3.6,
   secondary: 2.4,
@@ -773,7 +774,7 @@ export function auditScientificFigure(
     if (!node.data.label.trim()) return false;
     const labelPoints = scientificUnitsToPoints(node.data.fontSize);
     const descriptionPoints = node.data.description
-      ? scientificUnitsToPoints(Math.max(PUBLICATION_TYPOGRAPHY.edgeLabel, node.data.fontSize * 0.86))
+      ? scientificUnitsToPoints(Math.max(SCIENTIFIC_DESCRIPTION_MIN_FONT_SIZE, node.data.fontSize * 0.86))
       : Number.POSITIVE_INFINITY;
     const labelMinimum = node.data.schematicRole === 'annotation' ? 6 : 7;
     return labelPoints < labelMinimum || descriptionPoints < 6;
@@ -1021,12 +1022,18 @@ export function auditScientificFigure(
     if (!node.data.label.trim() || node.data.kind === 'vector' || node.data.kind === 'image') return false;
     const box = auditBox(node, byId);
     const definition = getShapeDefinition(node.data.kind);
-    const width = Math.max(1, box.width - (definition.textPlacement === 'lane' ? box.width * 0.87 : 24));
-    const labelLines = estimatedLineCount(node.data.label, width, node.data.fontSize);
-    const descriptionFontSize = Math.max(PUBLICATION_TYPOGRAPHY.edgeLabel, node.data.fontSize * 0.86);
-    const descriptionLines = node.data.description
-      ? Math.min(2, estimatedLineCount(node.data.description, width, descriptionFontSize))
+    const configuredPadding = Number(node.data.scientificTextPaddingX);
+    const horizontalPadding = Number.isFinite(configuredPadding) && configuredPadding >= 0 ? configuredPadding : 10;
+    const width = Math.max(1, definition.textPlacement === 'lane'
+      ? box.width * 0.13
+      : box.width - horizontalPadding * 2);
+    const rawLabelLines = estimatedLineCount(node.data.label, width, node.data.fontSize);
+    const labelLines = Math.min(2, rawLabelLines);
+    const descriptionFontSize = Math.max(SCIENTIFIC_DESCRIPTION_MIN_FONT_SIZE, node.data.fontSize * 0.86);
+    const rawDescriptionLines = node.data.description
+      ? estimatedLineCount(node.data.description, width, descriptionFontSize)
       : 0;
+    const descriptionLines = Math.min(2, rawDescriptionLines);
     const labelHeight = node.data.fontSize * 1.1
       + Math.max(0, labelLines - 1) * node.data.fontSize * 1.18;
     const descriptionHeight = descriptionLines
@@ -1037,7 +1044,7 @@ export function auditScientificFigure(
       + descriptionHeight
       + (descriptionLines ? Math.max(3, node.data.fontSize * 0.16) : 0);
     const impossibleWidth = estimateSvgTextWidth(node.data.label.replace(/\s+/g, ''), node.data.fontSize) > width * 3.2;
-    return impossibleWidth || requiredHeight > box.height;
+    return impossibleWidth || rawLabelLines > 2 || rawDescriptionLines > 2 || requiredHeight > box.height;
   });
   if (textOverflow.length) issues.push({
     id: 'text-overflow',

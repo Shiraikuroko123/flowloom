@@ -890,7 +890,7 @@ function EditorApp() {
           elevateNodesOnSelect={false}
           defaultEdgeOptions={{ type: 'smoothstep' }}
           connectionLineStyle={{ stroke: 'oklch(0.560 0.155 72)', strokeWidth: 2 }}
-          proOptions={{ hideAttribution: false }}
+          proOptions={{ hideAttribution: true }}
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.2} color="var(--canvas-grid)" />
           {minimap && (

@@ -347,6 +347,7 @@ export interface FlowNodeData extends Record<string, unknown> {
   schematicDetail?: ScientificSchematicDensity;
   scientificTextPaddingX?: number;
   scientificTextPaddingY?: number;
+  scientificDescriptionFontSize?: number;
   scientificVariant?: ScientificVisualVariant;
   scientificEvidence?: ScientificEvidenceState;
   scientificDataContract?: ScientificDataContract;

@@ -2918,3 +2918,284 @@ kbd {
     opacity: 1;
   }
 }
+
+/* Product visual refresh: precise instrument chrome around a literal white canvas. */
+:root {
+  --brand: oklch(0.69 0.13 205);
+  --brand-strong: oklch(0.54 0.125 205);
+  --brand-hover: oklch(0.49 0.125 205);
+  --brand-soft: oklch(0.94 0.04 205);
+  --accent: oklch(0.51 0.13 242);
+  --accent-soft: oklch(0.94 0.035 242);
+  --canvas: oklch(1 0 0);
+  --surface: oklch(0.972 0.008 225);
+  --surface-raised: oklch(0.995 0.003 225);
+  --surface-hover: oklch(0.942 0.012 220);
+  --surface-active: oklch(0.905 0.022 218);
+  --ink: oklch(0.23 0.018 235);
+  --ink-soft: oklch(0.36 0.019 232);
+  --muted: oklch(0.5 0.016 232);
+  --muted-strong: oklch(0.42 0.018 232);
+  --border: oklch(0.875 0.012 225);
+  --border-strong: oklch(0.72 0.028 222);
+  --focus: oklch(0.59 0.14 205);
+  --danger: oklch(0.55 0.19 27);
+  --danger-soft: oklch(0.95 0.045 27);
+  --success: oklch(0.46 0.11 165);
+  --success-soft: oklch(0.94 0.04 165);
+  --info: oklch(0.52 0.14 245);
+  --info-soft: oklch(0.95 0.035 245);
+  --warning: oklch(0.62 0.15 76);
+  --warning-soft: oklch(0.955 0.045 76);
+  --canvas-grid: oklch(0.84 0.02 220);
+  --minimap-mask: oklch(0.28 0.02 230 / 0.22);
+  --overlay: oklch(0.14 0.022 235 / 0.54);
+  --selection: oklch(0.69 0.13 205 / 0.18);
+  --shadow-menu: 0 7px 8px oklch(0.16 0.022 235 / 0.16);
+}
+
+:root[data-theme="dark"] {
+  --brand: oklch(0.78 0.12 205);
+  --brand-strong: oklch(0.72 0.125 205);
+  --brand-hover: oklch(0.81 0.105 205);
+  --brand-soft: oklch(0.26 0.05 205);
+  --accent: oklch(0.75 0.105 242);
+  --accent-soft: oklch(0.24 0.045 242);
+  --canvas: oklch(0.155 0.014 230);
+  --surface: oklch(0.185 0.016 230);
+  --surface-raised: oklch(0.22 0.017 230);
+  --surface-hover: oklch(0.27 0.021 230);
+  --surface-active: oklch(0.32 0.035 220);
+  --ink: oklch(0.94 0.012 215);
+  --ink-soft: oklch(0.82 0.013 215);
+  --muted: oklch(0.69 0.012 215);
+  --muted-strong: oklch(0.76 0.014 215);
+  --border: oklch(0.33 0.021 228);
+  --border-strong: oklch(0.48 0.035 220);
+  --canvas-grid: oklch(0.42 0.025 220);
+  --minimap-mask: oklch(0.06 0.01 230 / 0.5);
+  --overlay: oklch(0.03 0.01 230 / 0.75);
+  --selection: oklch(0.75 0.12 205 / 0.22);
+  --shadow-menu: 0 7px 8px oklch(0.03 0.01 230 / 0.48);
+}
+
+body {
+  font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+  background: oklch(0.955 0.011 225);
+}
+
+.app-shell {
+  background: oklch(0.955 0.011 225);
+}
+
+.topbar {
+  padding-inline: 12px;
+  background: #101b24;
+  border-block-end-color: #253743;
+  color: #eaf5f7;
+}
+
+.topbar__divider,
+.topbar .control-divider {
+  background: #314652;
+}
+
+.brand {
+  color: #f4fbfc;
+}
+
+.brand:hover {
+  background: rgb(112 205 218 / 0.1);
+}
+
+.brand__mark {
+  border: 1px solid rgb(200 251 255 / 0.42);
+  background: #008da1;
+  box-shadow: none;
+}
+
+.brand__name {
+  font-weight: 720;
+}
+
+.document-title input {
+  color: #eef9fa;
+  font-weight: 700;
+}
+
+.document-title input:hover,
+.document-title input:focus {
+  background: rgb(112 205 218 / 0.1);
+}
+
+.document-title span {
+  color: #9db6c0;
+}
+
+.topbar .icon-button {
+  color: #b9cbd1;
+}
+
+.topbar .icon-button:hover:not(:disabled) {
+  background: rgb(112 205 218 / 0.11);
+  color: #f2fcfd;
+}
+
+.topbar .icon-button.is-active {
+  background: rgb(0 174 193 / 0.22);
+  color: #8af0f7;
+}
+
+.topbar-command {
+  color: #c1d4d9;
+}
+
+.topbar-command:hover:not(:disabled) {
+  border-color: transparent;
+  background: rgb(112 205 218 / 0.1);
+  color: #f5fcfd;
+}
+
+.topbar .scientific-button {
+  background: rgb(0 174 193 / 0.13);
+  color: #9bf7fb;
+}
+
+.topbar .scientific-button:hover:not(:disabled) {
+  background: rgb(0 174 193 / 0.23);
+  color: #efffff;
+}
+
+.primary-button {
+  background: #007f91;
+}
+
+.primary-button:hover:not(:disabled) {
+  background: #006f80;
+}
+
+.library-panel,
+.inspector {
+  background: oklch(0.972 0.008 225);
+}
+
+.library-panel {
+  border-inline-end-color: oklch(0.84 0.018 221);
+}
+
+.inspector {
+  border-inline-start-color: oklch(0.84 0.018 221);
+}
+
+.panel-tabs,
+.inspector-tabs,
+.library-search,
+.inspector__header,
+.inspector-section,
+.shape-category {
+  border-color: var(--border);
+}
+
+.panel-tabs button.is-active,
+.inspector-tabs button.is-active {
+  color: #006f80;
+}
+
+.panel-tabs button.is-active::after,
+.inspector-tabs button.is-active::after {
+  background: #00a7b8;
+}
+
+.shape-category > summary {
+  min-height: 40px;
+  color: var(--ink-soft);
+}
+
+.shape-grid {
+  gap: 4px;
+  padding: 6px 8px 12px;
+}
+
+.shape-item {
+  min-height: 80px;
+  background: rgb(255 255 255 / 0.42);
+}
+
+.shape-item:hover,
+.shape-item:focus-visible {
+  border-color: oklch(0.68 0.08 205);
+  background: #ffffff;
+}
+
+.shape-item__preview {
+  color: oklch(0.49 0.03 222);
+}
+
+.search-field,
+.field-stack input:not([type="range"]):not([type="checkbox"]),
+.field-stack textarea,
+.field-stack select,
+.field-pair input,
+.field-pair select,
+.color-control input,
+.ai-settings input {
+  background: #ffffff;
+}
+
+.canvas-area {
+  background: #ffffff;
+}
+
+.canvas-controls {
+  border-color: oklch(0.78 0.025 220);
+  background: rgb(255 255 255 / 0.96);
+  box-shadow: 0 5px 8px oklch(0.19 0.02 232 / 0.14);
+}
+
+.flow-minimap {
+  border-color: oklch(0.78 0.025 220) !important;
+  background: rgb(255 255 255 / 0.95) !important;
+}
+
+.pagebar,
+.statusbar {
+  background: #f7fafb;
+  border-color: oklch(0.84 0.018 221);
+}
+
+.statusbar {
+  color: var(--muted-strong);
+}
+
+.flow-node__content {
+  font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+}
+
+/* Preserve the primary research workspace and orientation context on compact screens. */
+@media (max-width: 1180px) {
+  .topbar-command.scientific-button {
+    width: auto;
+    min-width: 68px;
+    padding-inline: 9px;
+  }
+
+  .topbar-command.scientific-button span { display: inline; }
+}
+
+@media (max-width: 640px) {
+  .topbar__right .scientific-button {
+    display: inline-flex;
+    min-height: 44px;
+  }
+
+  .topbar__right .scientific-button span { display: inline; }
+  .topbar__right .ai-button,
+  .topbar__right .inspector-toggle { display: none; }
+  .document-title { max-width: min(43vw, 170px); }
+
+  .flow-minimap {
+    display: block;
+    width: 108px !important;
+    height: 66px !important;
+  }
+}

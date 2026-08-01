@@ -1,6 +1,6 @@
 import type { FlowNodeData, ShapeKind } from '../types';
 import { estimateSvgTextWidth } from './diagram';
-import { PUBLICATION_TYPOGRAPHY } from './scientific';
+import { SCIENTIFIC_DESCRIPTION_MIN_FONT_SIZE } from './scientific';
 import { getShapeDefinition } from './shapeRegistry';
 
 export interface ScientificNodeTextLayout {
@@ -12,6 +12,17 @@ export interface ScientificNodeTextLayout {
   labelLines: string[];
   labelStartY: number;
   visualHeight: number;
+}
+
+export interface ScientificImageLabelLayout {
+  baseline: number;
+  fontSize: number;
+  height: number;
+  paddingX: number;
+  paddingY: number;
+  width: number;
+  x: number;
+  y: number;
 }
 
 export const SCIENTIFIC_NODE_TEXT_PADDING_X = 10;
@@ -39,6 +50,14 @@ export function scientificNodeTextPaddingY(data: FlowNodeData): number {
   return Number.isFinite(configured) && configured >= 0
     ? configured
     : SCIENTIFIC_FRAME_TEXT_PADDING_Y;
+}
+
+function scientificDescriptionFontSize(data: FlowNodeData): number {
+  const configured = Number(data.scientificDescriptionFontSize);
+  return Math.max(
+    SCIENTIFIC_DESCRIPTION_MIN_FONT_SIZE,
+    Number.isFinite(configured) && configured > 0 ? configured : data.fontSize * 0.86,
+  );
 }
 
 export function wrapScientificText(
@@ -97,6 +116,44 @@ export function wrapScientificText(
   return visible;
 }
 
+export function layoutScientificImageLabel(
+  data: FlowNodeData,
+  width: number,
+  height: number,
+): ScientificImageLabelLayout | undefined {
+  const label = data.label.trim();
+  if (data.kind !== 'image' || data.scientificEvidence !== 'schematic' || !label) return undefined;
+
+  const inset = 3;
+  const requestedFontSize = Math.max(1, data.fontSize);
+  const requestedPaddingX = Math.max(3, requestedFontSize * 0.3);
+  const maximumWidth = Math.max(1, width - inset * 2);
+  const estimatedAtRequestedSize = estimateSvgTextWidth(label, requestedFontSize) * 1.1;
+  const availableTextWidth = Math.max(1, maximumWidth - requestedPaddingX * 2);
+  const fontSize = Math.min(
+    requestedFontSize,
+    requestedFontSize * availableTextWidth / Math.max(1, estimatedAtRequestedSize),
+  );
+  const paddingX = Math.min(requestedPaddingX, Math.max(1.5, maximumWidth * 0.12));
+  const paddingY = Math.max(1.5, fontSize * 0.1);
+  const textWidth = estimateSvgTextWidth(label, fontSize) * 1.1;
+  const labelWidth = Math.min(maximumWidth, textWidth + paddingX * 2);
+  const labelHeight = Math.min(Math.max(1, height - inset * 2), fontSize * 1.24 + paddingY * 2);
+  const x = inset;
+  const y = Math.max(inset, height - labelHeight - inset);
+
+  return {
+    baseline: y + labelHeight - paddingY - fontSize * 0.21,
+    fontSize,
+    height: labelHeight,
+    paddingX,
+    paddingY,
+    width: labelWidth,
+    x,
+    y,
+  };
+}
+
 export function layoutScientificNodeContent(
   data: FlowNodeData,
   width: number,
@@ -105,7 +162,7 @@ export function layoutScientificNodeContent(
   const definition = getShapeDefinition(data.kind);
   const maxWidth = scientificNodeTextMaxWidth(data, width);
   const labelLines = wrapScientificText(data.label, maxWidth, data.fontSize, 2);
-  const descriptionFontSize = Math.max(PUBLICATION_TYPOGRAPHY.edgeLabel, data.fontSize * 0.86);
+  const descriptionFontSize = scientificDescriptionFontSize(data);
   const descriptionLines = data.description?.trim()
     ? wrapScientificText(data.description, maxWidth, descriptionFontSize, 2)
     : [];
@@ -173,7 +230,7 @@ export function layoutSchematicNodeContent(
 
   const definition = getShapeDefinition(data.kind);
   const maxWidth = scientificNodeTextMaxWidth(data, width);
-  const descriptionFontSize = Math.max(PUBLICATION_TYPOGRAPHY.edgeLabel, data.fontSize * 0.86);
+  const descriptionFontSize = scientificDescriptionFontSize(data);
   const labelLineHeight = data.fontSize * 1.2;
   const descriptionLineHeight = descriptionFontSize * 1.2;
   const isFrame = data.schematicRole === 'frame' || data.schematicRole === 'phase';

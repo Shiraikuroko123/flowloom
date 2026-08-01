@@ -302,7 +302,7 @@ describe('publication SVG export', () => {
   it('prepares Unicode text while preserving SVG stroke widths for vector PDF scaling', () => {
     const source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1200">'
       + '<path vector-effect="non-scaling-stroke" stroke-width="3.6"/>'
-      + '<text font-family="Segoe UI" font-weight="650">世界模型 p(zₜ₊₁ | zₜ, aₜ)</text>'
+      + '<text font-family="Segoe UI" font-weight="650">世界模型 p(zₜ₊₁ | zₜ, aₜ) θ π τ Δ σ β ℝ →</text>'
       + '</svg>';
     const document = new DOMParser().parseFromString(source, 'image/svg+xml');
     const svg = document.documentElement as unknown as SVGSVGElement;
@@ -318,5 +318,10 @@ describe('publication SVG export', () => {
     expect(Array.from(svg.querySelectorAll('[data-flowloom-script="subscript"]')).map((span) => span.textContent))
       .toEqual(['t+1', 't', 't']);
     expect(svg.querySelector('[data-flowloom-script="subscript"]')?.getAttribute('dy')).not.toBeNull();
+    const mathRuns = Array.from(svg.querySelectorAll('[data-flowloom-math="true"]'));
+    expect(mathRuns.length).toBeGreaterThan(0);
+    expect(mathRuns.every((span) => span.getAttribute('font-family') === 'Flowloom Publication Math')).toBe(true);
+    expect(mathRuns.map((span) => span.textContent).join('')).toContain('θπτΔσβℝ→');
+    expect(svg.textContent).toContain('ℝ');
   });
 });

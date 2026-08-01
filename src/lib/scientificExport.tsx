@@ -7,19 +7,23 @@ import { mmToPx, PUBLICATION_TYPOGRAPHY } from './scientific';
 import { routeScientificEdge, scientificConnectionPoint } from './scientificRouting';
 import {
   isScientificShapeKind,
+  layoutScientificImageLabel,
   layoutScientificNodeContent,
   layoutSchematicNodeContent,
   scientificNodeTextPaddingX,
 } from './scientificNodeLayout';
 
 const PUBLICATION_PDF_FONT_FAMILY = 'Flowloom Publication Sans';
+const PUBLICATION_MATH_FONT_FAMILY = 'Flowloom Publication Math';
 const PUBLICATION_PDF_FONTS = [
-  { fileName: 'NotoSansSC-Regular.ttf', weight: 400 },
-  { fileName: 'NotoSansSC-Bold.ttf', weight: 700 },
+  { family: PUBLICATION_PDF_FONT_FAMILY, fileName: 'NotoSansSC-Regular.ttf', weight: 400 },
+  { family: PUBLICATION_PDF_FONT_FAMILY, fileName: 'NotoSansSC-Bold.ttf', weight: 700 },
+  { family: PUBLICATION_MATH_FONT_FAMILY, fileName: 'NotoSansMath-Regular.ttf', weight: 400 },
 ] as const;
 const PUBLICATION_RASTER_FONTS = [
-  { fileName: 'NotoSansSC-Evidence-Regular.ttf', weight: 400 },
-  { fileName: 'NotoSansSC-Evidence-Bold.ttf', weight: 700 },
+  { family: PUBLICATION_PDF_FONT_FAMILY, fileName: 'NotoSansSC-Evidence-Regular.ttf', weight: 400 },
+  { family: PUBLICATION_PDF_FONT_FAMILY, fileName: 'NotoSansSC-Evidence-Bold.ttf', weight: 700 },
+  { family: PUBLICATION_MATH_FONT_FAMILY, fileName: 'NotoSansMath-Regular.ttf', weight: 400 },
 ] as const;
 
 const PDF_SUBSCRIPT_GLYPHS: Record<string, string> = {
@@ -266,11 +270,11 @@ export interface PublicationPdfFontTarget {
 
 export async function registerPublicationPdfFonts(pdf: PublicationPdfFontTarget): Promise<void> {
   const fonts = await loadPublicationFontData();
-  for (const { fileName, weight } of PUBLICATION_PDF_FONTS) {
+  for (const { family, fileName, weight } of PUBLICATION_PDF_FONTS) {
     const data = fonts.get(fileName);
     if (!data) throw new Error(`Publication font is missing: ${fileName}`);
     pdf.addFileToVFS(fileName, data);
-    pdf.addFont(fileName, PUBLICATION_PDF_FONT_FAMILY, 'normal', weight, 'Identity-H');
+    pdf.addFont(fileName, family, 'normal', weight, 'Identity-H');
   }
 }
 
@@ -342,6 +346,50 @@ function replaceUnicodeScriptsForPdf(element: SVGTextElement): void {
   }
 }
 
+function isPublicationMathCharacter(character: string): boolean {
+  const codePoint = character.codePointAt(0) ?? 0;
+  return (codePoint >= 0x0370 && codePoint <= 0x03ff)
+    || (codePoint >= 0x2100 && codePoint <= 0x214f)
+    || (codePoint >= 0x2190 && codePoint <= 0x22ff);
+}
+
+function wrapPublicationMathGlyphs(element: SVGTextElement): void {
+  const textNodes: Text[] = [];
+  const collectTextNodes = (parent: Node) => {
+    parent.childNodes.forEach((child) => {
+      if (child.nodeType === 3) textNodes.push(child as Text);
+      else collectTextNodes(child);
+    });
+  };
+  collectTextNodes(element);
+
+  for (const textNode of textNodes) {
+    const runs: Array<{ math: boolean; value: string }> = [];
+    for (const character of Array.from(textNode.data)) {
+      const math = isPublicationMathCharacter(character);
+      const current = runs.at(-1);
+      if (current?.math === math) current.value += character;
+      else runs.push({ math, value: character });
+    }
+    if (!runs.some((run) => run.math)) continue;
+
+    const fragment = textNode.ownerDocument.createDocumentFragment();
+    for (const run of runs) {
+      if (!run.math) {
+        fragment.appendChild(textNode.ownerDocument.createTextNode(run.value));
+        continue;
+      }
+      const span = textNode.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+      span.textContent = run.value;
+      span.setAttribute('data-flowloom-math', 'true');
+      span.setAttribute('font-family', PUBLICATION_MATH_FONT_FAMILY);
+      span.setAttribute('font-weight', '400');
+      fragment.appendChild(span);
+    }
+    textNode.parentNode?.replaceChild(fragment, textNode);
+  }
+}
+
 export function preparePublicationSvgForPdf(
   svg: SVGSVGElement,
   _figure: ScientificFigureSpec,
@@ -353,6 +401,7 @@ export function preparePublicationSvgForPdf(
     const weight = numericAttribute(element, 'font-weight') ?? 400;
     element.setAttribute('font-family', PUBLICATION_PDF_FONT_FAMILY);
     element.setAttribute('font-weight', weight >= 600 ? '700' : '400');
+    wrapPublicationMathGlyphs(element);
     replaceUnicodeScriptsForPdf(element);
   });
 }
@@ -363,10 +412,10 @@ export async function preparePublicationSvgForRaster(
 ): Promise<void> {
   preparePublicationSvgForPdf(svg, figure);
   const fontData = await loadPublicationRasterFontData();
-  const rules = PUBLICATION_RASTER_FONTS.map(({ fileName, weight }) => {
+  const rules = PUBLICATION_RASTER_FONTS.map(({ family, fileName, weight }) => {
     const data = fontData.get(fileName);
     if (!data) throw new Error(`Publication raster font is missing: ${fileName}`);
-    return `@font-face{font-family:'${PUBLICATION_PDF_FONT_FAMILY}';src:url(data:font/ttf;base64,${data}) format('truetype');font-style:normal;font-weight:${weight};}`;
+    return `@font-face{font-family:'${family}';src:url(data:font/ttf;base64,${data}) format('truetype');font-style:normal;font-weight:${weight};}`;
   }).join('');
   const style = svg.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'style');
   style.setAttribute('data-flowloom-publication-fonts', 'true');
@@ -402,16 +451,11 @@ function serializeNodeText(node: FlowNode, box: NodeBox): string {
 
 function serializeScientificImageLabel(node: FlowNode, box: NodeBox): string {
   const label = node.data.label.trim();
-  if (node.data.scientificEvidence !== 'schematic' || !label) return '';
-  const fontSize = node.data.fontSize;
-  const paddingX = Math.max(2, fontSize * 0.28);
-  const paddingY = Math.max(1, fontSize * 0.08);
-  const width = Math.min(box.width - 4, estimateSvgTextWidth(label, fontSize) + paddingX * 2);
-  const height = Math.min(box.height - 4, fontSize * 0.98 + paddingY * 2);
-  const x = box.x + 2;
-  const y = box.y + box.height - height - 2;
-  const baseline = y + height - paddingY - fontSize * 0.12;
-  return `<g data-flowloom-image-label="true"><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="2" fill="#17232d" fill-opacity="0.88"/><text fill="#ffffff" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="${fontSize}" font-weight="${node.data.fontWeight}" text-anchor="start"><tspan x="${x + paddingX}" y="${baseline}">${escapeXml(label)}</tspan></text></g>`;
+  const layout = layoutScientificImageLabel(node.data, box.width, box.height);
+  if (!layout || !label) return '';
+  const x = box.x + layout.x;
+  const y = box.y + layout.y;
+  return `<g data-flowloom-image-label="true"><rect data-flowloom-image-label-bg="true" x="${x}" y="${y}" width="${layout.width}" height="${layout.height}" rx="2" fill="#17232d" fill-opacity="0.9"/><text data-flowloom-image-label-text="true" fill="#ffffff" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="${layout.fontSize}" font-weight="${node.data.fontWeight}" text-anchor="start"><tspan x="${x + layout.paddingX}" y="${box.y + layout.baseline}">${escapeXml(label)}</tspan></text></g>`;
 }
 
 function serializeVectorNode(node: FlowNode, box: NodeBox): string {
@@ -543,7 +587,7 @@ export function serializePublicationSvg(
     const role = node.data.schematicRole ? ` data-schematic-role="${escapeXml(node.data.schematicRole)}"` : '';
     const variant = node.data.scientificVariant ? ` data-scientific-variant="${escapeXml(node.data.scientificVariant)}"` : '';
     const evidence = node.data.scientificEvidence ? ` data-scientific-evidence="${escapeXml(node.data.scientificEvidence)}"` : '';
-    return `<g data-flowloom-node-id="${escapeXml(node.id)}" data-flowloom-kind="${escapeXml(node.data.kind)}"${role}${variant}${evidence}>${markup}</g>`;
+    return `<g data-flowloom-node-id="${escapeXml(node.id)}" data-flowloom-kind="${escapeXml(node.data.kind)}" data-flowloom-node-x="${box.x}" data-flowloom-node-y="${box.y}" data-flowloom-node-width="${box.width}" data-flowloom-node-height="${box.height}"${role}${variant}${evidence}>${markup}</g>`;
   }).join('');
   const backgroundNodes = sortedNodes.filter((node) => node.data.schematicRole === 'frame' || node.data.schematicRole === 'phase');
   const foregroundNodes = sortedNodes.filter((node) => node.data.schematicRole !== 'frame' && node.data.schematicRole !== 'phase');

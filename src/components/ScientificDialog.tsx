@@ -10,6 +10,8 @@ import {
   Info,
   LoaderCircle,
   ListChecks,
+  Maximize2,
+  Minimize2,
   Palette,
   Route,
   ScanSearch,
@@ -54,6 +56,7 @@ import { IconButton } from './IconButton';
 import { ShapeVisual } from './ShapeVisual';
 import { routeScientificEdge, scientificConnectionPoint } from '../lib/scientificRouting';
 import {
+  layoutScientificImageLabel,
   layoutSchematicNodeContent,
   scientificNodeTextPaddingX,
 } from '../lib/scientificNodeLayout';
@@ -398,6 +401,7 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
     const box = boxes.get(node.id)!;
     const isFrame = node.data.schematicRole === 'frame' || node.data.schematicRole === 'phase';
     const isImage = node.data.kind === 'image' && Boolean(node.data.imageUrl);
+    const imageLabel = isImage ? layoutScientificImageLabel(node.data, box.width, box.height) : undefined;
     const textLayout = layoutSchematicNodeContent(node.data, box.width, box.height);
     const lines = isImage ? [] : textLayout.labelLines;
     const fontSize = node.data.fontSize;
@@ -452,6 +456,29 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
               stroke={node.data.stroke}
               strokeWidth={node.data.borderWidth}
             />
+            {imageLabel && (
+              <g data-flowloom-preview-image-label={node.id}>
+                <rect
+                  data-flowloom-preview-image-label-bg={node.id}
+                  x={box.x + imageLabel.x}
+                  y={box.y + imageLabel.y}
+                  width={imageLabel.width}
+                  height={imageLabel.height}
+                  rx="2"
+                  fill="#17232d"
+                  fillOpacity="0.9"
+                />
+                <text
+                  data-flowloom-preview-image-label-line={node.id}
+                  x={box.x + imageLabel.x + imageLabel.paddingX}
+                  y={box.y + imageLabel.baseline}
+                  fill="#ffffff"
+                  fontSize={imageLabel.fontSize}
+                  fontWeight={node.data.fontWeight}
+                  textAnchor="start"
+                >{node.data.label}</text>
+              </g>
+            )}
           </>
         ) : isFrame ? (
           <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={node.data.radius} fill={node.data.fill} stroke={node.data.stroke} strokeWidth={node.data.borderWidth} />
@@ -509,6 +536,7 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
     <svg
       className="schematic-svg-preview"
       viewBox={`0 0 ${schematic.width} ${schematic.height}`}
+      fontFamily="Segoe UI, Microsoft YaHei UI, Arial, sans-serif"
       data-flowloom-preview-layout={schematic.layout}
       data-flowloom-preview-template-id={schematic.templateId}
       role="img"
@@ -593,6 +621,7 @@ function SchematicEditor({
   const selectedTemplate = SCIENTIFIC_SCHEMATIC_TEMPLATES.find((template) => template.id === options.templateId) ?? SCIENTIFIC_SCHEMATIC_TEMPLATES[0];
   const figureRecipe = getScientificFigureRecipe(options.templateId);
   const flagshipQuality = assessFlagshipQualityScope(options, schematic.layout);
+  const [previewZoomed, setPreviewZoomed] = useState(false);
   const layoutLabel = schematic.layout === 'single-column'
     ? '89 mm 单栏重排'
     : schematic.layout === 'presentation'
@@ -719,37 +748,50 @@ function SchematicEditor({
         </details>
       </section>
 
-      <section className="scientific-preview-pane scientific-schematic-preview" aria-label="论文示意图预览">
-        <div className="scientific-preview-header">
-          <strong>投稿级原生图元预览</strong>
-          <span>{layoutLabel} · {schematic.nodes.length} 个对象 · {schematic.edges.length} 条连接</span>
-        </div>
-        {flagshipQuality.status !== 'not-flagship' && flagshipQuality.scorecard && (
-          <div
-            className={`flagship-quality-strip flagship-quality-strip--${flagshipQuality.status}`}
-            role="status"
-            data-flagship-quality-status={flagshipQuality.status}
-            data-flagship-template-id={options.templateId}
-          >
-            {flagshipQuality.status === 'reviewed'
-              ? <CheckCircle2 size={17} aria-hidden="true" />
-              : <TriangleAlert size={17} aria-hidden="true" />}
-            <span>
-              <strong>{flagshipQuality.status === 'reviewed'
-                ? `独立盲评 ${flagshipQuality.scorecard.totalScore.toFixed(1)}/100`
-                : '当前变体需要独立复核'}</strong>
-              <small>{flagshipQuality.reasons.join(' · ')} · 量表 {flagshipQuality.scorecard.rubricVersion}</small>
-            </span>
+      <details className="scientific-schematic-preview-dock" open>
+        <summary>
+          <span><Cpu size={14} aria-hidden="true" />投稿级预览</span>
+          <span>{layoutLabel} · {schematic.nodes.length} 个对象</span>
+        </summary>
+        <section className="scientific-preview-pane scientific-schematic-preview" aria-label="论文示意图预览">
+          <div className="scientific-preview-header">
+            <strong>投稿级原生图元预览</strong>
+            <span>{layoutLabel} · {schematic.nodes.length} 个对象 · {schematic.edges.length} 条连接</span>
+            <IconButton
+              label={previewZoomed ? '适合预览' : '放大预览'}
+              icon={previewZoomed ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              active={previewZoomed}
+              className="schematic-preview-zoom"
+              onClick={() => setPreviewZoomed((value) => !value)}
+            />
           </div>
-        )}
-        <div className="schematic-preview-stage"><SchematicPreview schematic={schematic} /></div>
-        <div className="schematic-reference-strip">
-          <span><Cpu size={14} />构图研究</span>
-          <div>{selectedTemplate.references.map((reference) => (
-            <a key={`${reference.arxivId}-${reference.figure}`} href={`https://arxiv.org/abs/${reference.arxivId}`} target="_blank" rel="noreferrer">{reference.title} · {reference.figure}</a>
-          ))}</div>
-        </div>
-      </section>
+          {flagshipQuality.status !== 'not-flagship' && flagshipQuality.scorecard && (
+            <div
+              className={`flagship-quality-strip flagship-quality-strip--${flagshipQuality.status}`}
+              role="status"
+              data-flagship-quality-status={flagshipQuality.status}
+              data-flagship-template-id={options.templateId}
+            >
+              {flagshipQuality.status === 'reviewed'
+                ? <CheckCircle2 size={17} aria-hidden="true" />
+                : <TriangleAlert size={17} aria-hidden="true" />}
+              <span>
+                <strong>{flagshipQuality.status === 'reviewed'
+                  ? `独立盲评 ${flagshipQuality.scorecard.totalScore.toFixed(1)}/100`
+                  : '当前变体需要独立复核'}</strong>
+                <small>{flagshipQuality.reasons.join(' · ')} · 量表 {flagshipQuality.scorecard.rubricVersion}</small>
+              </span>
+            </div>
+          )}
+          <div className={`schematic-preview-stage ${previewZoomed ? 'is-zoomed' : ''}`}><SchematicPreview schematic={schematic} /></div>
+          <div className="schematic-reference-strip">
+            <span><Cpu size={14} />构图研究</span>
+            <div>{selectedTemplate.references.map((reference) => (
+              <a key={`${reference.arxivId}-${reference.figure}`} href={`https://arxiv.org/abs/${reference.arxivId}`} target="_blank" rel="noreferrer">{reference.title} · {reference.figure}</a>
+            ))}</div>
+          </div>
+        </section>
+      </details>
     </div>
   );
 }
