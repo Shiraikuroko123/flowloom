@@ -302,7 +302,8 @@ describe('publication SVG export', () => {
   it('prepares Unicode text while preserving SVG stroke widths for vector PDF scaling', () => {
     const source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1200">'
       + '<path vector-effect="non-scaling-stroke" stroke-width="3.6"/>'
-      + '<text font-family="Segoe UI" font-weight="650">世界模型 p(zₜ₊₁ | zₜ, aₜ) θ π τ Δ σ β ℝ →</text>'
+      + '<text font-family="Segoe UI" font-weight="650">世界模型 b̂⁽ᵏ⁾ p(zₜ₊₁ | zₜ, aₜ) θ π τ Δ σ β ℝᴴˣ⁷ →</text>'
+      + '<text font-family="Segoe UI">ôₜ₊₁</text>'
       + '</svg>';
     const document = new DOMParser().parseFromString(source, 'image/svg+xml');
     const svg = document.documentElement as unknown as SVGSVGElement;
@@ -314,9 +315,23 @@ describe('publication SVG export', () => {
     expect(svg.querySelector('text')?.getAttribute('font-family')).toBe('Flowloom Publication Sans');
     expect(svg.querySelector('text')?.getAttribute('font-weight')).toBe('700');
     expect(svg.querySelector('text')?.textContent).toContain('p(zt+1 | zt, at)');
-    expect(svg.querySelectorAll('[data-flowloom-script="subscript"]')).toHaveLength(3);
-    expect(Array.from(svg.querySelectorAll('[data-flowloom-script="subscript"]')).map((span) => span.textContent))
-      .toEqual(['t+1', 't', 't']);
+    expect(svg.querySelector('text')?.textContent).toContain('bˆ(k)');
+    expect(svg.querySelector('text')?.textContent).not.toContain('\u0302');
+    expect(svg.querySelector('text')?.textContent).toContain('ℝH×7');
+    const subscriptRuns = Array.from(svg.querySelectorAll('[data-flowloom-script="subscript"]'));
+    expect(subscriptRuns).toHaveLength(4);
+    expect(subscriptRuns.map((span) => span.textContent)).toEqual(['t+1', 't', 't', 't+1']);
+    expect(subscriptRuns.every((span) => Number(span.getAttribute('dx')) < 0)).toBe(true);
+    expect(Array.from(svg.querySelectorAll('[data-flowloom-script="superscript"]')).map((span) => span.textContent))
+      .toContain('H×7');
+    const dimensionSuperscript = Array.from(svg.querySelectorAll('[data-flowloom-script="superscript"]'))
+      .find((span) => span.textContent === 'H×7');
+    expect(Number(dimensionSuperscript?.getAttribute('dx'))).toBeLessThan(0);
+    const circumflex = svg.querySelector('[data-flowloom-math-accent="circumflex"]');
+    expect(circumflex?.textContent).toBe('ˆ');
+    expect(circumflex?.getAttribute('font-family')).toBe('Flowloom Publication Math');
+    expect(circumflex?.getAttribute('dx')).not.toBeNull();
+    expect(circumflex?.getAttribute('dy')).not.toBeNull();
     expect(svg.querySelector('[data-flowloom-script="subscript"]')?.getAttribute('dy')).not.toBeNull();
     const mathRuns = Array.from(svg.querySelectorAll('[data-flowloom-math="true"]'));
     expect(mathRuns.length).toBeGreaterThan(0);

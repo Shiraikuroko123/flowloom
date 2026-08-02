@@ -56,6 +56,7 @@ import { IconButton } from './IconButton';
 import { ShapeVisual } from './ShapeVisual';
 import { routeScientificEdge, scientificConnectionPoint } from '../lib/scientificRouting';
 import {
+  isScientificShapeKind,
   layoutScientificImageLabel,
   layoutSchematicNodeContent,
   scientificNodeTextPaddingX,
@@ -469,18 +470,26 @@ function SchematicPreview({ schematic }: { schematic: EditableScientificSchemati
                   fillOpacity="0.9"
                 />
                 <text
-                  data-flowloom-preview-image-label-line={node.id}
                   x={box.x + imageLabel.x + imageLabel.paddingX}
-                  y={box.y + imageLabel.baseline}
                   fill="#ffffff"
                   fontSize={imageLabel.fontSize}
                   fontWeight={node.data.fontWeight}
                   textAnchor="start"
-                >{node.data.label}</text>
+                >
+                  {imageLabel.lines.map((line, index) => (
+                    <tspan
+                      key={`${node.id}-image-label-${index}`}
+                      data-flowloom-preview-image-label-line={node.id}
+                      data-flowloom-preview-line-index={index}
+                      x={box.x + imageLabel.x + imageLabel.paddingX}
+                      y={box.y + imageLabel.baseline + index * imageLabel.lineHeight}
+                    >{line}</tspan>
+                  ))}
+                </text>
               </g>
             )}
           </>
-        ) : isFrame ? (
+        ) : isFrame && !isScientificShapeKind(node.data.kind) ? (
           <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={node.data.radius} fill={node.data.fill} stroke={node.data.stroke} strokeWidth={node.data.borderWidth} />
         ) : node.data.kind === 'ellipse' ? (
           <ellipse cx={box.x + box.width / 2} cy={box.y + box.height / 2} rx={box.width / 2} ry={box.height / 2} fill={node.data.fill} stroke={node.data.stroke} strokeWidth={node.data.borderWidth} />

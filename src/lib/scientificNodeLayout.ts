@@ -18,6 +18,8 @@ export interface ScientificImageLabelLayout {
   baseline: number;
   fontSize: number;
   height: number;
+  lineHeight: number;
+  lines: string[];
   paddingX: number;
   paddingY: number;
   width: number;
@@ -126,26 +128,50 @@ export function layoutScientificImageLabel(
 
   const inset = 3;
   const requestedFontSize = Math.max(1, data.fontSize);
-  const requestedPaddingX = Math.max(3, requestedFontSize * 0.3);
+  const requestedPaddingX = Math.max(3, requestedFontSize * 0.11);
   const maximumWidth = Math.max(1, width - inset * 2);
-  const estimatedAtRequestedSize = estimateSvgTextWidth(label, requestedFontSize) * 1.1;
   const availableTextWidth = Math.max(1, maximumWidth - requestedPaddingX * 2);
+  const paragraphs = label.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const words = paragraphs.length > 1 ? paragraphs : label.split(/\s+/).filter(Boolean);
+  let lines = [label.replace(/\s+/g, ' ').trim()];
+  if (estimateSvgTextWidth(lines[0], requestedFontSize) * 1.1 > availableTextWidth && words.length > 1) {
+    let bestSplit = 1;
+    let bestWidth = Number.POSITIVE_INFINITY;
+    for (let split = 1; split < words.length; split += 1) {
+      const candidate = [words.slice(0, split).join(' '), words.slice(split).join(' ')];
+      const widest = Math.max(...candidate.map((line) => estimateSvgTextWidth(line, requestedFontSize)));
+      if (widest < bestWidth) {
+        bestWidth = widest;
+        bestSplit = split;
+      }
+    }
+    lines = [words.slice(0, bestSplit).join(' '), words.slice(bestSplit).join(' ')];
+  }
+  const estimatedAtRequestedSize = Math.max(
+    ...lines.map((line) => estimateSvgTextWidth(line, requestedFontSize) * 1.1),
+  );
   const fontSize = Math.min(
     requestedFontSize,
     requestedFontSize * availableTextWidth / Math.max(1, estimatedAtRequestedSize),
   );
   const paddingX = Math.min(requestedPaddingX, Math.max(1.5, maximumWidth * 0.12));
   const paddingY = Math.max(1.5, fontSize * 0.1);
-  const textWidth = estimateSvgTextWidth(label, fontSize) * 1.1;
+  const lineHeight = fontSize * 1.18;
+  const textWidth = Math.max(...lines.map((line) => estimateSvgTextWidth(line, fontSize) * 1.1));
   const labelWidth = Math.min(maximumWidth, textWidth + paddingX * 2);
-  const labelHeight = Math.min(Math.max(1, height - inset * 2), fontSize * 1.24 + paddingY * 2);
+  const labelHeight = Math.min(
+    Math.max(1, height - inset * 2),
+    fontSize * 1.24 + Math.max(0, lines.length - 1) * lineHeight + paddingY * 2,
+  );
   const x = inset;
   const y = Math.max(inset, height - labelHeight - inset);
 
   return {
-    baseline: y + labelHeight - paddingY - fontSize * 0.21,
+    baseline: y + paddingY + fontSize * 1.03,
     fontSize,
     height: labelHeight,
+    lineHeight,
+    lines,
     paddingX,
     paddingY,
     width: labelWidth,

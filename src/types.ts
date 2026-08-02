@@ -213,6 +213,7 @@ export type ScientificVisualVariant =
   | 'risk-ranking'
   | 'capability-safety'
   | 'prediction-error'
+  | 'score-bracket'
   | 'object-cube'
   | 'object-cylinder'
   | 'goal-bin'

@@ -11,9 +11,8 @@ import {
 export const FLAGSHIP_QUALITY_THRESHOLD = 95;
 export const FLAGSHIP_MINIMUM_DIMENSION_RATIO = 0.7;
 export const FLAGSHIP_QUALITY_RUBRIC_VERSION = 'independent-six-axis-2026.07.30';
-// The V5 composition system intentionally supersedes the signed-off V4
-// snapshots. A score is only published again after a fresh read-only review.
-export const FLAGSHIP_REVIEW_IS_CURRENT = false;
+// Signed against the immutable publication-evidence batch recorded below.
+export const FLAGSHIP_REVIEW_IS_CURRENT = true;
 
 export const FLAGSHIP_TEMPLATE_IDS = [
   'vla-policy',
@@ -86,25 +85,25 @@ const REVIEWED_FLAGSHIPS: Record<FlagshipTemplateId, {
   'vla-policy': {
     name: 'Vision-Language-Action Policy',
     layouts: [
-      { layout: 'single-column', scores: [96, 95, 95, 95, 95, 95] },
-      { layout: 'double-column', scores: [97, 96, 95, 96, 96, 96] },
-      { layout: 'presentation', scores: [96, 95, 95, 96, 95, 95] },
+      { layout: 'single-column', scores: [97, 96, 95, 95, 95, 94] },
+      { layout: 'double-column', scores: [98, 97, 96, 97, 96, 94] },
+      { layout: 'presentation', scores: [98, 97, 96, 97, 97, 93] },
     ],
   },
   'world-model-rollout': {
     name: 'World-Model Rollout',
     layouts: [
-      { layout: 'single-column', scores: [97, 95, 95, 95, 95, 95] },
-      { layout: 'double-column', scores: [97, 96, 95, 96, 96, 96] },
-      { layout: 'presentation', scores: [97, 96, 95, 96, 97, 96] },
+      { layout: 'single-column', scores: [97, 95, 95, 95, 95, 94] },
+      { layout: 'double-column', scores: [98, 96, 96, 96, 96, 94] },
+      { layout: 'presentation', scores: [98, 97, 96, 96, 97, 94] },
     ],
   },
   'llm-training-pipeline': {
     name: 'LLM Alignment: DPO vs RLHF',
     layouts: [
-      { layout: 'single-column', scores: [96, 95, 95, 95, 95, 95] },
-      { layout: 'double-column', scores: [97, 96, 95, 95, 96, 96] },
-      { layout: 'presentation', scores: [97, 97, 96, 96, 97, 96] },
+      { layout: 'single-column', scores: [97, 96, 95, 95, 95, 96] },
+      { layout: 'double-column', scores: [98, 97, 96, 97, 96, 96] },
+      { layout: 'presentation', scores: [98, 98, 96, 97, 97, 96] },
     ],
   },
 };
@@ -166,11 +165,11 @@ function buildReviewedScorecard(templateId: FlagshipTemplateId): FlagshipQuality
     templateId,
     name: reviewed.name,
     rubricVersion: FLAGSHIP_QUALITY_RUBRIC_VERSION,
-    reviewedAt: FLAGSHIP_REVIEW_IS_CURRENT ? '2026-07-30' : '',
-    reviewer: FLAGSHIP_REVIEW_IS_CURRENT ? 'Lagrange, independent read-only reviewer agent' : 'Awaiting independent read-only review',
-    reviewedRevision: FLAGSHIP_REVIEW_IS_CURRENT ? 'publication-evidence-2026-07-30T12:52:22+08:00' : 'V5 composition refresh',
+    reviewedAt: FLAGSHIP_REVIEW_IS_CURRENT ? '2026-08-02' : '',
+    reviewer: FLAGSHIP_REVIEW_IS_CURRENT ? 'Bacon, independent read-only reviewer agent' : 'Awaiting independent read-only review',
+    reviewedRevision: FLAGSHIP_REVIEW_IS_CURRENT ? 'publication-evidence-2026-08-02T01:38:12.765Z' : 'V5 composition refresh',
     scope: FLAGSHIP_REVIEW_IS_CURRENT
-      ? 'Blind review of the default English detailed conference export in single-column, double-column, and presentation layouts. Total score is the weakest layout, not an average across layouts.'
+      ? 'Blind read-only review of 18 PNG exports, 18 PDF renders, and both contact sheets from the recorded evidence batch. Scores cover the default English detailed conference export in single-column, double-column, and presentation layouts. Total score is the weakest layout mean.'
       : 'The V4 scorecard is superseded. The V5 default English detailed conference matrix is awaiting independent review.',
     layoutReviews,
     dimensions,

@@ -1075,7 +1075,20 @@ function ShapeVisualComponent({
       );
       break;
     case 'scientific-equation':
-      geometry = (
+      geometry = variant === 'score-bracket' ? (
+        <>
+          <path d="M6 14H2V88H6M94 14H98V88H94" {...heavy} />
+          <circle
+            cx="93"
+            cy="4"
+            r="2.6"
+            fill={stroke}
+            stroke={fill}
+            strokeWidth={Math.max(0.8, strokeWidth * 0.65)}
+            vectorEffect="non-scaling-stroke"
+          />
+        </>
+      ) : (
         <>
           <path d="M15 13H8V87H15M85 13H92V87H85" {...heavy} />
         </>

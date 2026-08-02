@@ -62,9 +62,16 @@ const formats = [
 ];
 const styles = ['conference', 'monochrome'];
 const requiredPdfGlyphs = {
-  'vla-policy': ['ℝ'],
-  'world-model-rollout': ['θ'],
+  'vla-policy': ['ℝ', '×'],
+  'world-model-rollout': ['θ', '×'],
   'llm-training-pipeline': ['θ', 'π', 'τ'],
+};
+const requiredPdfTextPatterns = {
+  'vla-policy': [{ id: 'action-tensor-horizon', expression: 'ℝ\\s*H\\s*×\\s*7' }],
+  'world-model-rollout': [
+    { id: 'action-tensor-horizon', expression: 'ℝ\\s*H\\s*×\\s*7' },
+    { id: 'predicted-belief-accent', expression: 'b\\s*(?:\\u0302|\\u02C6)\\s*\\(\\s*k\\s*\\)' },
+  ],
 };
 const previewViewports = [
   { id: 'qa-1920x1200', width: 1920, height: 1200 },
@@ -585,7 +592,7 @@ async function collectPreviewLayoutValidation(page, url, presentationSvgs) {
 
 function baseMarkdownReport(manifest) {
   const rows = manifest.artifacts.map((item) => (
-    `| ${item.templateId} | ${item.format} | ${item.style} | ${item.nodeCount}/${item.edgeCount} | ${item.minimumFontPt.toFixed(2)} | ${item.svgTextValidation.minimumRenderedFontPt?.toFixed(2) ?? 'n/a'} | ${item.minimumStrokePt.toFixed(2)} | ${item.audit.error}/${item.audit.warning}/${item.audit.info} | ${item.pdfFonts.allEmbedded ? 'yes' : 'no'} | ${item.pdfText.missingGlyphs.length ? `missing ${item.pdfText.missingGlyphs.join(', ')}` : 'yes'} | ${item.svgLabelValidation.failures.length ? 'no' : 'yes'} | ${item.svgTextValidation.failures.length ? 'no' : 'yes'} |`
+    `| ${item.templateId} | ${item.format} | ${item.style} | ${item.nodeCount}/${item.edgeCount} | ${item.minimumFontPt.toFixed(2)} | ${item.svgTextValidation.minimumRenderedFontPt?.toFixed(2) ?? 'n/a'} | ${item.minimumStrokePt.toFixed(2)} | ${item.audit.error}/${item.audit.warning}/${item.audit.info} | ${item.pdfFonts.allEmbedded ? 'yes' : 'no'} | ${item.pdfText.missingGlyphs.length || item.pdfText.missingPatterns.length ? `missing ${[...item.pdfText.missingGlyphs, ...item.pdfText.missingPatterns].join(', ')}` : 'yes'} | ${item.svgLabelValidation.failures.length ? 'no' : 'yes'} | ${item.svgTextValidation.failures.length ? 'no' : 'yes'} |`
   )).join('\n');
   const flagshipRows = manifest.flagships.map((item) => (
     `| ${item.templateId} | ${item.totalScore.toFixed(1)} | ${item.minimumDimensionScore.toFixed(1)} | ${item.variantCount}/${item.expectedVariantCount} | ${item.failureReasons.length ? item.failureReasons.join('; ') : 'none'} |`
@@ -724,9 +731,14 @@ async function main() {
       artifact.pdfInfo = run(pdfinfo, [pdfPath]).trim();
       const text = run(pdftotext, ['-layout', pdfPath, '-']).trim();
       const requiredGlyphs = requiredPdfGlyphs[artifact.templateId] ?? [];
+      const requiredPatterns = requiredPdfTextPatterns[artifact.templateId] ?? [];
       artifact.pdfText = {
         requiredGlyphs,
+        requiredPatterns,
         missingGlyphs: requiredGlyphs.filter((glyph) => !text.includes(glyph)),
+        missingPatterns: requiredPatterns
+          .filter(({ expression }) => !new RegExp(expression, 'u').test(text))
+          .map(({ id }) => id),
         text,
       };
     }
@@ -767,8 +779,8 @@ async function main() {
         const failures = [];
         if (artifact.audit.error) failures.push(`${artifact.audit.error} audit error(s)`);
         if (!artifact.pdfFonts.allEmbedded) failures.push('PDF font embedding failed');
-        if (artifact.pdfText.missingGlyphs.length) {
-          failures.push(`PDF text missing ${artifact.pdfText.missingGlyphs.join(', ')}`);
+        if (artifact.pdfText.missingGlyphs.length || artifact.pdfText.missingPatterns.length) {
+          failures.push(`PDF text missing ${[...artifact.pdfText.missingGlyphs, ...artifact.pdfText.missingPatterns].join(', ')}`);
         }
         if (artifact.svgLabelValidation.failures.length) {
           failures.push(`${artifact.svgLabelValidation.failures.length} image-label containment failure(s)`);
@@ -787,7 +799,7 @@ async function main() {
           minimumStrokePt: artifact.minimumStrokePt,
           audit: artifact.audit,
           pdfFontsEmbedded: artifact.pdfFonts.allEmbedded,
-          pdfTextPassed: artifact.pdfText.missingGlyphs.length === 0,
+          pdfTextPassed: artifact.pdfText.missingGlyphs.length === 0 && artifact.pdfText.missingPatterns.length === 0,
           imageLabelsPassed: artifact.svgLabelValidation.failures.length === 0,
           physicalTextPassed: artifact.svgTextValidation.failures.length === 0,
           rasterPassed: raster?.passed ?? false,
@@ -859,6 +871,7 @@ async function main() {
         previewThresholds,
         minimumTextPt: { paper: 7.5, presentation: 9 },
         requiredPdfGlyphs,
+        requiredPdfTextPatterns,
         disclaimer: 'Export readiness is not venue acceptance or scientific validation.',
       },
       flagships,
@@ -874,7 +887,7 @@ async function main() {
         auditWarnings: artifacts.reduce((sum, item) => sum + item.audit.warning, 0),
         rasterFailures: rasterValidation.failures.length,
         pdfFontFailures: artifacts.filter((item) => !item.pdfFonts.allEmbedded).length,
-        pdfTextFailures: artifacts.filter((item) => item.pdfText.missingGlyphs.length).length,
+        pdfTextFailures: artifacts.filter((item) => item.pdfText.missingGlyphs.length || item.pdfText.missingPatterns.length).length,
         svgLabelFailures: artifacts.reduce((sum, item) => sum + item.svgLabelValidation.failures.length, 0),
         svgTextFailures: artifacts.reduce((sum, item) => sum + item.svgTextValidation.failures.length, 0),
         previewLayoutChecks: previewLayoutValidation.reduce((sum, item) => sum + item.checkCount, 0),

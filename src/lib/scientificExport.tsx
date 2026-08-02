@@ -99,9 +99,10 @@ const PDF_SUPERSCRIPT_GLYPHS: Record<string, string> = {
   'ᵘ': 'u',
   'ᵛ': 'v',
   'ʷ': 'w',
-  'ˣ': 'x',
+  'ˣ': '×',
   'ʸ': 'y',
   'ᶻ': 'z',
+  'ᴴ': 'H',
 };
 
 let publicationFontData: Promise<Map<string, string>> | undefined;
@@ -308,6 +309,49 @@ function pdfTextRuns(value: string): PdfTextRun[] {
   return runs;
 }
 
+function replaceCombiningCircumflexForPublication(element: SVGTextElement): void {
+  const textNodes: Text[] = [];
+  const collectTextNodes = (parent: Node) => {
+    parent.childNodes.forEach((child) => {
+      if (child.nodeType === 3) textNodes.push(child as Text);
+      else collectTextNodes(child);
+    });
+  };
+  collectTextNodes(element);
+
+  const fontSize = numericAttribute(element, 'font-size') ?? PUBLICATION_TYPOGRAPHY.moduleLabel;
+  const accentFontSize = fontSize * 0.58;
+  const accentShift = fontSize * 0.28;
+  for (const textNode of textNodes) {
+    const accentIndex = textNode.data.indexOf('\u0302');
+    if (accentIndex <= 0) continue;
+    const beforeAccent = textNode.data.slice(0, accentIndex);
+    const base = Array.from(beforeAccent).at(-1) ?? '';
+    const remainder = textNode.data.slice(accentIndex + 1);
+    const baseWidth = estimateSvgTextWidth(base, fontSize);
+    const accentWidth = estimateSvgTextWidth('ˆ', accentFontSize);
+    const fragment = textNode.ownerDocument.createDocumentFragment();
+    fragment.appendChild(textNode.ownerDocument.createTextNode(beforeAccent));
+
+    const accent = textNode.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+    accent.textContent = 'ˆ';
+    accent.setAttribute('data-flowloom-math-accent', 'circumflex');
+    accent.setAttribute('font-family', PUBLICATION_MATH_FONT_FAMILY);
+    accent.setAttribute('font-size', String(accentFontSize));
+    accent.setAttribute('font-weight', '400');
+    accent.setAttribute('dx', String(-(baseWidth + accentWidth) / 2));
+    accent.setAttribute('dy', String(-accentShift));
+    fragment.appendChild(accent);
+
+    const restore = textNode.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+    restore.textContent = remainder;
+    restore.setAttribute('dx', String((baseWidth - accentWidth) / 2));
+    restore.setAttribute('dy', String(accentShift));
+    fragment.appendChild(restore);
+    textNode.parentNode?.replaceChild(fragment, textNode);
+  }
+}
+
 function replaceUnicodeScriptsForPdf(element: SVGTextElement): void {
   const textNodes: Text[] = [];
   const collectTextNodes = (parent: Node) => {
@@ -326,7 +370,7 @@ function replaceUnicodeScriptsForPdf(element: SVGTextElement): void {
     if (runs.every((run) => run.kind === 'normal')) continue;
     const fragment = textNode.ownerDocument.createDocumentFragment();
     let baseline = 0;
-    for (const run of runs) {
+    for (const [index, run] of runs.entries()) {
       const targetBaseline = run.kind === 'subscript'
         ? baselineOffset
         : run.kind === 'superscript'
@@ -336,8 +380,29 @@ function replaceUnicodeScriptsForPdf(element: SVGTextElement): void {
       span.textContent = run.value;
       if (run.kind !== 'normal') {
         span.setAttribute('data-flowloom-script', run.kind);
+        span.setAttribute('font-family', PUBLICATION_MATH_FONT_FAMILY);
+        span.setAttribute('font-weight', '400');
         span.setAttribute('font-size', String(scriptFontSize));
       }
+      const precedingElement = textNode.previousSibling instanceof Element
+        ? textNode.previousSibling
+        : textNode.parentElement?.previousSibling instanceof Element
+          ? textNode.parentElement.previousSibling
+          : undefined;
+      const followsBaseGlyph = index > 0
+        && runs[index - 1].kind === 'normal'
+        && /[\p{L}\p{N})\]]$/u.test(runs[index - 1].value);
+      const followsMathGlyph = index === 0
+        && run.kind === 'superscript'
+        && precedingElement?.getAttribute('data-flowloom-math') === 'true';
+      const followsCircumflex = index === 0
+        && precedingElement?.getAttribute('data-flowloom-math-accent') === 'circumflex';
+      const horizontalTighten = followsMathGlyph
+        ? fontSize * 0.18
+        : followsBaseGlyph || followsCircumflex
+          ? fontSize * 0.12
+          : 0;
+      if (horizontalTighten) span.setAttribute('dx', String(-horizontalTighten));
       if (targetBaseline !== baseline) span.setAttribute('dy', String(targetBaseline - baseline));
       fragment.appendChild(span);
       baseline = targetBaseline;
@@ -401,6 +466,7 @@ export function preparePublicationSvgForPdf(
     const weight = numericAttribute(element, 'font-weight') ?? 400;
     element.setAttribute('font-family', PUBLICATION_PDF_FONT_FAMILY);
     element.setAttribute('font-weight', weight >= 600 ? '700' : '400');
+    replaceCombiningCircumflexForPublication(element);
     wrapPublicationMathGlyphs(element);
     replaceUnicodeScriptsForPdf(element);
   });
@@ -455,7 +521,10 @@ function serializeScientificImageLabel(node: FlowNode, box: NodeBox): string {
   if (!layout || !label) return '';
   const x = box.x + layout.x;
   const y = box.y + layout.y;
-  return `<g data-flowloom-image-label="true"><rect data-flowloom-image-label-bg="true" x="${x}" y="${y}" width="${layout.width}" height="${layout.height}" rx="2" fill="#17232d" fill-opacity="0.9"/><text data-flowloom-image-label-text="true" fill="#ffffff" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="${layout.fontSize}" font-weight="${node.data.fontWeight}" text-anchor="start"><tspan x="${x + layout.paddingX}" y="${box.y + layout.baseline}">${escapeXml(label)}</tspan></text></g>`;
+  const tspans = layout.lines.map((line, index) => (
+    `<tspan x="${x + layout.paddingX}" y="${box.y + layout.baseline + index * layout.lineHeight}">${escapeXml(line)}</tspan>`
+  )).join('');
+  return `<g data-flowloom-image-label="true"><rect data-flowloom-image-label-bg="true" x="${x}" y="${y}" width="${layout.width}" height="${layout.height}" rx="2" fill="#17232d" fill-opacity="0.9"/><text data-flowloom-image-label-text="true" fill="#ffffff" font-family="Segoe UI, Microsoft YaHei UI, Arial, sans-serif" font-size="${layout.fontSize}" font-weight="${node.data.fontWeight}" text-anchor="start">${tspans}</text></g>`;
 }
 
 function serializeVectorNode(node: FlowNode, box: NodeBox): string {

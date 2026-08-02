@@ -44,6 +44,10 @@ export const SCIENTIFIC_VISUAL_VARIANTS: Partial<Record<ShapeKind, ScientificVis
     { value: 'default', label: '候选选择' },
     { value: 'risk-ranking', label: '风险排序' },
   ],
+  'scientific-equation': [
+    { value: 'default', label: '通用公式' },
+    { value: 'score-bracket', label: '紧凑评分括号' },
+  ],
   'scientific-metric-panel': [
     { value: 'default', label: '通用指标' },
     { value: 'capability-safety', label: '能力与安全' },

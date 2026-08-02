@@ -330,6 +330,10 @@ describe('scientific schematic templates', () => {
       const vlaFeedback = vla.edges.find((edge) => edge.source === 'vla-rollout-c' && edge.target === 'vla-feedback-note');
       expect(vlaFeedback?.data?.scientificSemantic, `${vla.layout}:observation-feedback-semantic`).toBe('feedback');
       expect(vlaFeedback?.data?.lineStyle, `${vla.layout}:observation-feedback-style`).toBe('dashed');
+      const vlaFeedbackReturn = vla.edges.find((edge) => edge.source === 'vla-feedback-note' && edge.target === 'vla-observation');
+      expect(vlaFeedbackReturn?.data?.scientificSemantic, `${vla.layout}:feedback-return-semantic`).toBe('feedback');
+      expect(vlaFeedbackReturn?.data?.lineStyle, `${vla.layout}:feedback-return-style`).toBe('dashed');
+      expect(hasDirectedPath(vla.edges, 'vla-rollout-c', 'vla-observation'), `${vla.layout}:closed-observation-loop`).toBe(true);
 
       const world = createScientificSchematic(options({ templateId: 'world-model-rollout', density: 'detailed' }), figure);
       for (const candidate of ['wm-rollout-safe', 'wm-rollout-contact', 'wm-rollout-uncertain']) {
@@ -337,6 +341,10 @@ describe('scientific schematic templates', () => {
         expect(hasDirectedPath(world.edges, candidate, 'wm-score'), `${world.layout}:risk-score:${candidate}`).toBe(true);
       }
       expect(hasDirectedPath(world.edges, 'wm-score', 'wm-residual'), `${world.layout}:decision-to-residual`).toBe(true);
+      expect(
+        world.edges.some((edge) => edge.source === 'wm-score' && edge.target === 'wm-residual'),
+        `${world.layout}:selected-prediction-to-residual`,
+      ).toBe(true);
       const beliefFeedback = world.edges.filter((edge) => edge.target === 'wm-update');
       expect(beliefFeedback.length, `${world.layout}:belief-update-inputs`).toBe(1);
       expect(beliefFeedback[0]?.data?.scientificSemantic, `${world.layout}:belief-feedback-semantic`).toBe('feedback');
@@ -351,6 +359,14 @@ describe('scientific schematic templates', () => {
       expect(optionalBaseline.length, `${llm.layout}:baseline-edges`).toBe(4);
       expect(optionalBaseline.every((edge) => edge.data?.lineStyle === 'dotted'), `${llm.layout}:baseline-style`).toBe(true);
       expect(hasDirectedPath(llm.edges, 'llm-ppo', 'llm-gate'), `${llm.layout}:optional-baseline-to-release`).toBe(true);
+      expect(
+        llm.edges.some((edge) => edge.source === 'llm-ppo' && edge.target === 'llm-policy'),
+        `${llm.layout}:baseline-aligned-policy-input`,
+      ).toBe(true);
+      expect(
+        llm.edges.some((edge) => edge.source === 'llm-ppo' && edge.target === 'llm-suite'),
+        `${llm.layout}:no-evaluation-bypass`,
+      ).toBe(false);
     }
   });
 
@@ -402,7 +418,7 @@ describe('scientific schematic templates', () => {
     };
     const expectedPhases = {
       'vla-policy': ['vla-01', 'vla-02', 'vla-03', 'vla-04'],
-      'world-model-rollout': ['wm-01', 'wm-02', 'wm-03', 'wm-04'],
+      'world-model-rollout': ['wm-01', 'wm-02', 'wm-03', 'wm-04', 'wm-05'],
       'llm-training-pipeline': ['llm-01', 'llm-02', 'llm-03', 'llm-04', 'llm-05'],
     } as const;
 

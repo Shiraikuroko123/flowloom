@@ -93,6 +93,7 @@ export interface EdgeSpec {
   targetAnchorOffset?: ScientificRouteAnchorOffset;
   labelOffsetX?: number;
   labelOffsetY?: number;
+  width?: number;
 }
 
 const COLOR_PALETTE: FlagshipPalette = {
@@ -224,6 +225,7 @@ export function makeEdge(palette: FlagshipPalette, spec: EdgeSpec): FlowEdge {
   const baseStyle = SCIENTIFIC_CONNECTOR_STYLES[semantic];
   const color = palette.edge[semantic];
   const routing = spec.routing ?? 'smoothstep';
+  const width = spec.width ?? baseStyle.width;
   const edge = createFlowEdge(spec.source, spec.target, spec.label, routing);
   const arrowEnd = spec.arrowEnd ?? baseStyle.arrowEnd;
   const lineStyle = spec.lineStyle ?? baseStyle.lineStyle;
@@ -236,7 +238,7 @@ export function makeEdge(palette: FlagshipPalette, spec: EdgeSpec): FlowEdge {
     ...edge.data!,
     label: spec.label,
     color,
-    width: baseStyle.width,
+    width,
     routing,
     lineStyle,
     arrowEnd,
@@ -253,7 +255,7 @@ export function makeEdge(palette: FlagshipPalette, spec: EdgeSpec): FlowEdge {
   edge.style = {
     ...edge.style,
     stroke: color,
-    strokeWidth: baseStyle.width,
+    strokeWidth: width,
     strokeDasharray: lineStyle === 'dashed' ? '8 6' : lineStyle === 'dotted' ? '2 5' : undefined,
   };
   edge.markerEnd = createEdgeMarker(arrowEnd, color);
